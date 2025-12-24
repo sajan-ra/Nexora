@@ -10,37 +10,27 @@ import DashboardStats from './components/DashboardStats';
 import AIInsights from './components/AIInsights';
 import { TrendingUp, User, LayoutDashboard, Briefcase, Cpu } from 'lucide-react';
 
-const ALL_SYMBOLS = [
-  // Commercial Banks
-  "NABIL","NMB","NICA","GBIME","EBL","HBL","NIBL","PCBL","SBL","SCB",
-  "ADBL","CZBIL","MBL","KBL","LBL","SANIMA","PRVU","BOKL","MEGA","SRBL",
-  // Development Banks
-  "MNBBL","JBBL","GBBL","SHINE","SADBL","CORBL","SAPDBL","MLBL","KSBBL","UDBL",
-  // Finance Companies
-  "GUFL","PFL","MFIL","CFCL","ICFC","BFCL","SFCL",
-  // Life Insurance
-  "NLIC","LICN","ALICL","PLIC","RLICL","SLICL","SNLI","ILI","ULI",
-  // Non-Life Insurance
-  "NICL","SICL","NIL","PRIN","IGI","SALICO","SGIC","SPIL","HEI","RBCL",
-  // Hydropower
-  "CHCL","BPCL","NHPC","SHPC","RADHI","SAHAS","UPCL","UNHPL","AKPL","API",
-  "NGPL","NYADI","DHPL","RHPL","HPPL",
-  // Investment / Others
-  "CIT","HIDCL","NIFRA","NRN","HATHY","ENL",
-  // Manufacturing & Processing
-  "UNL","HDL","SHIVM","BNT","BNL","SARBTM","GCIL","SONA","NLO","OMPL",
-  // Trading / Hotels / Aviation / Telecom
-  "STC","BBC","NTC","OHL","TRH","YHL","AHPC"
-];
+const SYMBOLS = {
+  "Commercial Banks": ["NABIL","NMB","NICA","GBIME","EBL","HBL","NIBL","PCBL","SBL","SCB","ADBL","CZBIL","MBL","KBL","LBL","SANIMA","PRVU","BOKL","MEGA","SRBL"],
+  "Dev Banks": ["MNBBL","JBBL","GBBL","SHINE","SADBL","CORBL","SAPDBL","MLBL","KSBBL","UDBL"],
+  "Finance": ["GUFL","PFL","MFIL","CFCL","ICFC","BFCL","SFCL"],
+  "Life Insurance": ["NLIC","LICN","ALICL","PLIC","RLICL","SLICL","SNLI","ILI","ULI"],
+  "Non-Life Insurance": ["NICL","SICL","NIL","PRIN","IGI","SALICO","SGIC","SPIL","HEI","RBCL"],
+  "Hydropower": ["CHCL","BPCL","NHPC","SHPC","RADHI","SAHAS","UPCL","UNHPL","AKPL","API","NGPL","NYADI","DHPL","RHPL","HPPL"],
+  "Investment": ["CIT","HIDCL","NIFRA","NRN","HATHY","ENL"],
+  "Manufacturing": ["UNL","HDL","SHIVM","BNT","BNL","SARBTM","GCIL","SONA","NLO","OMPL"],
+  "Others": ["STC","BBC","NTC","OHL","TRH","YHL","AHPC"]
+};
 
+const ALL_FLAT_SYMBOLS = Object.values(SYMBOLS).flat();
 const INITIAL_BALANCE = 1000000;
 const SIMULATION_INTERVAL = 2000;
 
 const App: React.FC = () => {
   const [stocks, setStocks] = useState<Stock[]>(() => 
-    ALL_SYMBOLS.map(symbol => ({
+    ALL_FLAT_SYMBOLS.map(symbol => ({
       Symbol: symbol,
-      LTP: 100 + Math.random() * 400, // Seed data until first fetch
+      LTP: 100 + Math.random() * 900, // Placeholder until first fetch
       Change: 0,
       Open: 100,
       High: 100,
@@ -50,10 +40,10 @@ const App: React.FC = () => {
     }))
   );
   
-  const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<AppTab>(AppTab.MARKET);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('NABIL');
   const [isMarketOpen, setIsMarketOpen] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
   const [portfolio, setPortfolio] = useState<Portfolio>(() => {
     const saved = localStorage.getItem('nexora_portfolio');
     if (saved) return JSON.parse(saved);
@@ -62,24 +52,33 @@ const App: React.FC = () => {
 
   const checkMarketStatus = useCallback(() => {
     const now = new Date();
-    const day = now.getDay(); 
+    const day = now.getDay(); // 0 is Sunday in some locales, check Nepal context
     const hour = now.getHours();
+    // Sun (0) to Thu (4)
     const isBusinessDay = day >= 0 && day <= 4; 
     const isWithinHours = hour >= 10 && hour < 15;
     setIsMarketOpen(isBusinessDay && isWithinHours);
   }, []);
 
+  // Simulator: Locally nudges prices to feel "live"
   const simulatePriceMovements = useCallback(() => {
     if (!isMarketOpen) return;
     setStocks(currentStocks => 
       currentStocks.map(stock => {
-        // Only simulate the ones we've "fetched" or the selected one to keep it realistic
+        // We only simulate the active stock or stocks in our portfolio for performance
+        const isInPortfolio = portfolio.holdings.some(h => h.symbol === stock.Symbol);
         const isSelected = stock.Symbol === selectedSymbol;
-        const volatility = isSelected ? 1.2 : 0.4;
-        const nudge = (Math.random() * 2 - 1) * (stock.LTP * 0.001 * volatility);
+        
+        if (!isSelected && !isInPortfolio) return stock;
+
+        // "2-3 digit" nudge (e.g. 0.01 to 0.99 or slightly more for high value stocks)
+        const volatility = stock.LTP > 1000 ? 2.5 : 0.8;
+        const nudge = (Math.random() * 2 - 1) * volatility;
         const newLTP = Math.max(1, stock.LTP + nudge);
+        
         const openPrice = stock.Open || (newLTP / (1 + stock.Change/100));
         const newChange = ((newLTP - openPrice) / openPrice) * 100;
+
         return {
           ...stock,
           LTP: newLTP,
@@ -89,27 +88,32 @@ const App: React.FC = () => {
         };
       })
     );
-  }, [isMarketOpen, selectedSymbol]);
+  }, [isMarketOpen, selectedSymbol, portfolio.holdings]);
 
-  const refreshActiveStock = useCallback(async () => {
-    if (!selectedSymbol) return;
-    const data = await fetchStockBySymbol(selectedSymbol);
+  const loadStockData = useCallback(async (symbol: string) => {
+    setIsFetching(true);
+    const data = await fetchStockBySymbol(symbol);
     if (data) {
-      setStocks(prev => prev.map(s => s.Symbol === selectedSymbol ? { ...s, ...data } as Stock : s));
+      setStocks(prev => prev.map(s => s.Symbol === symbol ? { ...s, ...data } as Stock : s));
     }
-  }, [selectedSymbol]);
+    setIsFetching(false);
+  }, []);
 
+  // Load selected stock on change
+  useEffect(() => {
+    loadStockData(selectedSymbol);
+  }, [selectedSymbol, loadStockData]);
+
+  // Global heartbeat
   useEffect(() => {
     checkMarketStatus();
-    refreshActiveStock();
-    const apiInterval = setInterval(refreshActiveStock, 15000); // Fetch real data every 15s
-    return () => clearInterval(apiInterval);
-  }, [refreshActiveStock, checkMarketStatus]);
-
-  useEffect(() => {
     const simInterval = setInterval(simulatePriceMovements, SIMULATION_INTERVAL);
-    return () => clearInterval(simInterval);
-  }, [simulatePriceMovements]);
+    const statusInterval = setInterval(checkMarketStatus, 60000);
+    return () => {
+      clearInterval(simInterval);
+      clearInterval(statusInterval);
+    };
+  }, [simulatePriceMovements, checkMarketStatus]);
 
   useEffect(() => {
     localStorage.setItem('nexora_portfolio', JSON.stringify(portfolio));
@@ -121,14 +125,14 @@ const App: React.FC = () => {
 
   const handleTrade = (type: 'BUY' | 'SELL', symbol: string, quantity: number, price: number) => {
     if (!isMarketOpen) {
-      alert("Market Closed. Sunday-Thursday, 10 AM - 3 PM.");
+      alert("Market is currently closed. (Sun-Thu, 10:00-15:00)");
       return;
     }
     setPortfolio(prev => {
       const totalCost = quantity * price;
       const newBalance = type === 'BUY' ? prev.balance - totalCost : prev.balance + totalCost;
       if (newBalance < 0 && type === 'BUY') {
-        alert("Insufficient Funds!");
+        alert("Insufficient balance!");
         return prev;
       }
       const existingHolding = prev.holdings.find(h => h.symbol === symbol);
@@ -172,7 +176,7 @@ const App: React.FC = () => {
             {[
               { id: AppTab.MARKET, icon: LayoutDashboard, label: 'Terminal' },
               { id: AppTab.PORTFOLIO, icon: Briefcase, label: 'Portfolio' },
-              { id: AppTab.AI_INSIGHTS, icon: Cpu, label: 'AI' }
+              { id: AppTab.AI_INSIGHTS, icon: Cpu, label: 'AI Insights' }
             ].map(t => (
               <button
                 key={t.id}
@@ -192,7 +196,7 @@ const App: React.FC = () => {
             {isMarketOpen ? 'Live' : 'Closed'}
           </div>
           <div className="flex flex-col items-end">
-            <span className="text-[9px] text-slate-500 font-black uppercase opacity-60">Balance</span>
+            <span className="text-[9px] text-slate-500 font-black uppercase opacity-60">Capital</span>
             <span className="text-sm font-black text-white tabular-nums">NPR {portfolio.balance.toLocaleString()}</span>
           </div>
           <div className="bg-[#1c2127] p-2 rounded-full border border-white/5 cursor-pointer hover:bg-[#2ebd85]/10 transition-colors">
@@ -204,7 +208,7 @@ const App: React.FC = () => {
       <div className="flex-1 flex overflow-hidden">
         {activeTab === AppTab.MARKET && (
           <>
-            <Sidebar stocks={stocks} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} loading={loading} />
+            <Sidebar stocks={stocks} selectedSymbol={selectedSymbol} onSelect={setSelectedSymbol} loading={isFetching} />
             <MainTerminal stock={selectedStock} holdings={portfolio.holdings} stocks={stocks} />
             <OrderPanel stock={selectedStock} balance={portfolio.balance} history={portfolio.history} onTrade={handleTrade} holdings={portfolio.holdings} isMarketOpen={isMarketOpen} />
           </>
