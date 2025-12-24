@@ -111,7 +111,7 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
         </div>
       </div>
 
-      <div className="flex-1 relative p-4 min-h-[300px]">
+      <div className="flex-1 relative p-4 flex flex-col min-h-[300px]">
         {!isMarketOpen && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#080a0c]/40 backdrop-blur-[1px] pointer-events-none">
             <div className="bg-[#111418] border border-[#1c2127] px-4 py-2 rounded-full flex items-center gap-3 shadow-2xl">
@@ -127,34 +127,36 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
            </h1>
         </div>
         
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1c2127" vertical={false} strokeOpacity={0.4} />
-            <XAxis dataKey="time" hide />
-            <YAxis orientation="right" domain={['auto', 'auto']} tick={{ fill: '#334155', fontSize: 10, fontWeight: '900' }} axisLine={false} tickLine={false} width={50} />
-            <Tooltip
-              contentStyle={{ backgroundColor: '#111418', border: '1px solid #1c2127', borderRadius: '4px' }}
-              cursor={{ fill: 'rgba(255,255,255,0.02)' }}
-              content={({ active, payload }) => {
-                if (active && payload?.length) {
-                  const d = payload[0].payload;
-                  return (
-                    <div className="bg-[#111418] border border-[#1c2127] p-2 rounded shadow-2xl">
-                      <div className="grid grid-cols-2 gap-x-4 text-[9px] font-black uppercase">
-                        <span className="text-slate-600">O:</span><span className="text-slate-300 text-right">{d.open.toFixed(2)}</span>
-                        <span className="text-slate-600">H:</span><span className="text-[#2ebd85] text-right">{d.high.toFixed(2)}</span>
-                        <span className="text-slate-600">L:</span><span className="text-[#f6465d] text-right">{d.low.toFixed(2)}</span>
-                        <span className="text-slate-600">C:</span><span className="text-slate-300 text-right">{d.close.toFixed(2)}</span>
+        <div className="flex-1 relative">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+            <BarChart data={chartData} margin={{ top: 20, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1c2127" vertical={false} strokeOpacity={0.4} />
+              <XAxis dataKey="time" hide />
+              <YAxis orientation="right" domain={['auto', 'auto']} tick={{ fill: '#334155', fontSize: 10, fontWeight: '900' }} axisLine={false} tickLine={false} width={50} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#111418', border: '1px solid #1c2127', borderRadius: '4px' }}
+                cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                content={({ active, payload }) => {
+                  if (active && payload?.length) {
+                    const d = payload[0].payload;
+                    return (
+                      <div className="bg-[#111418] border border-[#1c2127] p-2 rounded shadow-2xl">
+                        <div className="grid grid-cols-2 gap-x-4 text-[9px] font-black uppercase">
+                          <span className="text-slate-600">O:</span><span className="text-slate-300 text-right">{d.open.toFixed(2)}</span>
+                          <span className="text-slate-600">H:</span><span className="text-[#2ebd85] text-right">{d.high.toFixed(2)}</span>
+                          <span className="text-slate-600">L:</span><span className="text-[#f6465d] text-right">{d.low.toFixed(2)}</span>
+                          <span className="text-slate-600">C:</span><span className="text-slate-300 text-right">{d.close.toFixed(2)}</span>
+                        </div>
                       </div>
-                    </div>
-                  );
-                }
-                return null;
-              }}
-            />
-            <Bar dataKey="range" shape={<Candlestick />} animationDuration={0} />
-          </BarChart>
-        </ResponsiveContainer>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Bar dataKey="range" shape={<Candlestick />} animationDuration={0} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       <div className="h-64 border-t border-[#1c2127] flex flex-col bg-[#111418]/30">

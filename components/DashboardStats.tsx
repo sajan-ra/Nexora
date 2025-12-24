@@ -20,25 +20,27 @@ const DashboardStats: React.FC<DashboardStatsProps> = ({ portfolio, stocks }) =>
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      <div className="lg:col-span-3 glass-effect p-6 rounded-3xl border border-white/10 h-64 md:h-80">
+      <div className="lg:col-span-3 glass-effect p-6 rounded-3xl border border-white/10 h-64 md:h-80 flex flex-col">
         <h3 className="text-slate-400 font-semibold mb-4">Portfolio Value Over Time (Simulated)</h3>
-        <ResponsiveContainer width="100%" height="80%">
-          <AreaChart data={data}>
-            <defs>
-              <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <XAxis dataKey="name" hide />
-            <YAxis hide domain={['auto', 'auto']} />
-            <Tooltip 
-              contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '12px' }}
-              itemStyle={{ color: '#10b981' }}
-            />
-            <Area type="monotone" dataKey="value" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
-          </AreaChart>
-        </ResponsiveContainer>
+        <div className="flex-1 relative">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+            <AreaChart data={data}>
+              <defs>
+                <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="name" hide />
+              <YAxis hide domain={['auto', 'auto']} />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '12px' }}
+                itemStyle={{ color: '#10b981' }}
+              />
+              <Area type="monotone" dataKey="value" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorValue)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4">

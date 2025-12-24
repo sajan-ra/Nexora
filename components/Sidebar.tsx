@@ -55,12 +55,18 @@ const Sidebar: React.FC<SidebarProps> = ({ stocks, selectedSymbol, onSelect, loa
                 <div className="text-[9px] text-slate-600 font-bold uppercase">Equity</div>
               </div>
               <div className="text-right">
-                <div className="text-[11px] font-black text-slate-300 tabular-nums">
-                  {stock.LTP.toFixed(2)}
-                </div>
-                <div className={`text-[9px] font-black tabular-nums ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
-                  {stock.Change >= 0 ? '+' : ''}{stock.Change.toFixed(2)}%
-                </div>
+                {stock.LTP > 0 ? (
+                  <>
+                    <div className="text-[11px] font-black text-slate-300 tabular-nums">
+                      {stock.LTP.toFixed(2)}
+                    </div>
+                    <div className={`text-[9px] font-black tabular-nums ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
+                      {stock.Change >= 0 ? '+' : ''}{stock.Change.toFixed(2)}%
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[10px] text-slate-800 font-black italic">---</div>
+                )}
               </div>
             </button>
           ))
