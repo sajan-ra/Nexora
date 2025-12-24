@@ -4,29 +4,48 @@ import { Stock } from '../types';
 const BASE_URL = "https://nepsetty.kokomo.workers.dev/api/stock";
 
 export async function fetchStockBySymbol(symbol: string): Promise<Partial<Stock> | null> {
+  const cleanSymbol = symbol?.trim().toUpperCase();
+  if (!cleanSymbol) return null;
+
   try {
-    const response = await fetch(`${BASE_URL}?symbol=${symbol.toUpperCase()}`);
-    if (!response.ok) throw new Error(`Failed to fetch ${symbol}`);
+    // Using URL object for robust construction
+    const url = new URL(BASE_URL);
+    url.searchParams.set('symbol', cleanSymbol);
+
+    // Using a 'simple request' configuration to avoid OPTIONS preflight if possible
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit'
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
     const data = await response.json();
     
-    // Mapping from the Nepsetty Worker API structure
+    // The worker returns lowercase keys: ltp, symbol, company_name
+    if (!data || typeof data.ltp === 'undefined') return null;
+
     return {
-      Symbol: data.symbol || symbol,
-      LTP: parseFloat(data.lastTradedPrice || 0),
-      Change: parseFloat(data.percentageChange || 0),
-      Open: parseFloat(data.previousClose || data.lastTradedPrice || 0),
-      High: parseFloat(data.highPrice || data.lastTradedPrice || 0),
-      Low: parseFloat(data.lowPrice || data.lastTradedPrice || 0),
-      Volume: parseInt(data.totalTradeQuantity || 0),
-      Amount: parseFloat(data.totalTurnover || 0),
+      Symbol: data.symbol || cleanSymbol,
+      LTP: Number(data.ltp),
+      Open: Number(data.ltp),
+      High: Number(data.ltp),
+      Low: Number(data.ltp),
+      Volume: 0,
+      Amount: 0
     };
   } catch (error) {
-    console.error(`Error fetching ${symbol}:`, error);
+    // If the browser blocks the request (CORS), we return null 
+    // and let the internal engine take over.
     return null;
   }
 }
 
 export async function fetchMarketData(): Promise<Stock[]> {
-  // Legacy function - we now use on-demand symbol fetching in App.tsx
+  // Bulk fetch is not supported by this API. 
+  // App.tsx handles sequential individual fetches.
   return [];
 }

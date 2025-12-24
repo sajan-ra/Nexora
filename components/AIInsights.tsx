@@ -35,7 +35,7 @@ const AIInsights: React.FC<AIInsightsProps> = ({ stocks }) => {
           </div>
           <div>
             <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Nexora Intelligence</h2>
-            <p className="text-sm text-slate-500 font-medium">Gemini-powered NEPSE market analysis & strategy</p>
+            <p className="text-sm text-slate-500 font-medium">Gemini-powered market analysis & strategy</p>
           </div>
         </div>
         <button 

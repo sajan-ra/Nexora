@@ -25,7 +25,7 @@ const Sidebar: React.FC<SidebarProps> = ({ stocks, selectedSymbol, onSelect, loa
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" size={12} />
           <input 
             type="text"
-            placeholder="Search NEPSE Symbols..."
+            placeholder="Search Market Symbols..."
             className="w-full bg-[#080a0c] border border-[#1c2127] rounded-lg py-2 pl-9 pr-3 text-[11px] font-bold focus:outline-none focus:border-[#2ebd85] transition placeholder:text-slate-700"
             value={search}
             onChange={(e) => setSearch(e.target.value)}

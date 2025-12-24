@@ -32,7 +32,7 @@ const OrderPanel: React.FC<OrderPanelProps> = ({ stock, balance, history, onTrad
             <AlertCircle size={14} className="text-rose-500 mt-0.5 shrink-0" />
             <div className="text-[10px] text-rose-200 leading-tight">
               <span className="font-black uppercase block mb-0.5">Market Closed</span>
-              Trading is available Sunday to Thursday, from 10:00 AM to 3:00 PM.
+              Trading is available Sunday to Thursday, from 11:00 AM to 3:00 PM.
             </div>
           </div>
         )}
