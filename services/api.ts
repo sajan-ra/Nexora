@@ -1,30 +1,34 @@
 
 import { Stock } from '../types';
 
-const NEPSE_API_URL = "https://nepseapi.surajrimal.dev/PriceVolume";
+const BASE_URL = "https://nepsetty.kokomo.workers.dev/api/stock";
 
-export async function fetchMarketData(): Promise<Stock[]> {
+export async function fetchStockBySymbol(symbol: string): Promise<Partial<Stock> | null> {
   try {
-    const response = await fetch(NEPSE_API_URL);
-    if (!response.ok) throw new Error('Network response was not ok');
+    const response = await fetch(`${BASE_URL}?symbol=${symbol}`);
+    if (!response.ok) throw new Error(`Failed to fetch ${symbol}`);
     const data = await response.json();
     
-    // Mapping based on the provided JSON format:
-    // { "symbol": "ACLBSL", "lastTradedPrice": 905.0, "percentageChange": -0.65, "totalTradeQuantity": 437, ... }
-    return data.map((item: any) => ({
-      Symbol: item.symbol || 'N/A',
-      LTP: parseFloat(item.lastTradedPrice || item.closePrice || 0),
-      Change: parseFloat(item.percentageChange || 0),
-      // Defaulting O/H/L to LTP since the specific PriceVolume endpoint 
-      // primarily provides last traded price and volume
-      Open: parseFloat(item.previousClose || item.lastTradedPrice || 0),
-      High: parseFloat(item.lastTradedPrice || 0),
-      Low: parseFloat(item.lastTradedPrice || 0),
-      Volume: parseInt(item.totalTradeQuantity || 0),
-      Amount: parseFloat(item.totalTurnover || 0),
-    }));
+    // Mapping from the Nepsetty Worker API structure
+    // Expected: { symbol: "NABIL", lastTradedPrice: 500, percentageChange: 1.2, ... }
+    return {
+      Symbol: data.symbol || symbol,
+      LTP: parseFloat(data.lastTradedPrice || 0),
+      Change: parseFloat(data.percentageChange || 0),
+      Open: parseFloat(data.previousClose || data.lastTradedPrice || 0),
+      High: parseFloat(data.highPrice || data.lastTradedPrice || 0),
+      Low: parseFloat(data.lowPrice || data.lastTradedPrice || 0),
+      Volume: parseInt(data.totalTradeQuantity || 0),
+      Amount: parseFloat(data.totalTurnover || 0),
+    };
   } catch (error) {
-    console.error("Failed to fetch NEPSE data:", error);
-    return [];
+    console.error(`Error fetching ${symbol}:`, error);
+    return null;
   }
+}
+
+// Keeping the interface compatible but this will now be handled differently in App.tsx
+export async function fetchMarketData(): Promise<Stock[]> {
+  // This bulk endpoint is down, so we return empty and rely on fetchStockBySymbol
+  return [];
 }
