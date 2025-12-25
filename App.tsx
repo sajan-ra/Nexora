@@ -107,7 +107,7 @@ const App: React.FC = () => {
     return () => unsub();
   }, [user]);
 
-  // CYCLICAL TREND ENGINE (Admin only)
+  // BALANCED TREND ENGINE (Admin only)
   useEffect(() => {
     if (!isAdmin || !isMarketOpen || !user) return;
 
@@ -116,38 +116,56 @@ const App: React.FC = () => {
       
       const updatedStocks = stocks.map(stock => {
         let phase = trendPhaseRef.current[stock.Symbol] || { target: 0, counter: 0 };
+        const basePrice = BASE_PRICES[stock.Symbol] || 100.0;
         
-        // Change trend phase every 20-30 cycles
+        // 1. PHASE MANAGEMENT
         if (phase.counter <= 0) {
-          phase.target = (Math.random() * 2 - 1) * 0.003; // New bias
-          phase.counter = 20 + Math.floor(Math.random() * 30);
+          // Smaller target bias to avoid runaway trends
+          phase.target = (Math.random() * 2 - 1) * 0.0015; 
+          phase.counter = 10 + Math.floor(Math.random() * 15);
         }
         phase.counter--;
-        trendPhaseRef.current[stock.Symbol] = phase;
 
+        // 2. MEAN REVERSION (Elasticity)
+        // If price deviates more than 5% from base, pull it back
+        const deviation = (stock.LTP - basePrice) / basePrice;
+        const pullStrength = 0.0005; 
+        const elasticity = deviation * pullStrength; // Negative if too high, positive if too low
+
+        // 3. MOMENTUM & NOISE
         let currentMomentum = momentumRef.current[stock.Symbol] || 0;
         
-        // Smoothly adjust momentum towards phase target (Trend Persistence)
-        currentMomentum = currentMomentum * 0.9 + phase.target * 0.1;
-        // Add minimal noise
-        currentMomentum += (Math.random() * 2 - 1) * 0.0005;
+        // Momentum tends towards the target but is fought by elasticity
+        currentMomentum = (currentMomentum * 0.8) + (phase.target * 0.2) - elasticity;
+        
+        // Add "Choppiness" (Noise)
+        const noise = (Math.random() * 2 - 1) * 0.0008;
+        currentMomentum += noise;
         
         momentumRef.current[stock.Symbol] = currentMomentum;
 
+        // 4. PRICE UPDATE
         const delta = stock.LTP * currentMomentum;
-        const newLTP = Number(Math.max(0.01, stock.LTP + delta).toFixed(2));
+        let newLTP = Number(Math.max(0.1, stock.LTP + delta).toFixed(2));
         
+        // Extra Hard Dampening if price goes way off (circuit breaker style)
+        if (Math.abs(deviation) > 0.20) {
+           newLTP = stock.LTP - (deviation * 2); // Forceful correction
+        }
+
         const newStock = {
           ...stock,
           LTP: newLTP,
           Change: stock.Open !== 0 ? ((newLTP - stock.Open) / stock.Open) * 100 : 0,
           High: Math.max(stock.High, newLTP),
           Low: Math.min(stock.Low, newLTP),
-          Volume: stock.Volume + Math.floor(Math.random() * 8)
+          Volume: stock.Volume + Math.floor(Math.random() * 5)
         };
 
-        // Broadcast updates for high-conviction moves
-        if (Math.random() > 0.4) {
+        trendPhaseRef.current[stock.Symbol] = phase;
+
+        // Broadcast to Firebase
+        if (Math.random() > 0.3) {
           batch.set(doc(db, 'market', stock.Symbol), {
             ltp: newStock.LTP,
             change: newStock.Change,
@@ -165,7 +183,7 @@ const App: React.FC = () => {
         await batch.commit();
         setStocks(updatedStocks);
       } catch (e) {
-        console.error("Broadcast Failed:", e);
+        console.error("Simulation Sync Error:", e);
       }
     }, SIMULATION_INTERVAL);
 
