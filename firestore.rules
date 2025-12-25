@@ -4,14 +4,27 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
+    // Admin Identification
+    function isAdmin() {
+      return request.auth != null && request.auth.uid == "mgDRF6WPYLR8G2AkbSlT6ndsbyI3";
+    }
+
     // Portfolios: Users can only manage their own documents
     match /portfolios/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
     
-    // Market: Authenticated users can read shared market data and update it
+    // Global Settings: Everyone reads, only Admin writes
+    match /settings/market {
+      allow read: if request.auth != null;
+      allow write: if isAdmin();
+    }
+    
+    // Market Data: Authenticated users can read.
+    // In simulation mode, users need to update local drifting, but Admin is the true source.
     match /market/{symbol} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null; // Shared simulation drift
     }
     
     // Deny all other access

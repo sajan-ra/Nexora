@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Stock, Portfolio, Holding, Transaction, AppTab } from './types';
 import Sidebar from './components/Sidebar';
@@ -9,9 +8,11 @@ import DashboardStats from './components/DashboardStats';
 import AIInsights from './components/AIInsights';
 import Auth from './components/Auth';
 import { auth, db } from './services/firebase';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, User, updateProfile } from 'firebase/auth';
 import { doc, setDoc, onSnapshot, updateDoc, increment, collection, getDocs, writeBatch } from 'firebase/firestore';
-import { TrendingUp, LayoutDashboard, Briefcase, Cpu, Loader2, LogOut, Power } from 'lucide-react';
+import { TrendingUp, LayoutDashboard, Briefcase, Cpu, Loader2, LogOut, Power, ShieldCheck, RefreshCw } from 'lucide-react';
+
+const ADMIN_UID = "mgDRF6WPYLR8G2AkbSlT6ndsbyI3";
 
 const SYMBOLS = {
   "Banks": ["NABIL","NMB","NICA","GBIME","EBL","HBL","NIBL","PCBL","SBL","SCB","ADBL","CZBIL","MBL","KBL","LBL","SANIMA","PRVU","BOKL","MEGA","SRBL"],
@@ -22,8 +23,8 @@ const SYMBOLS = {
 };
 
 const ALL_FLAT_SYMBOLS = Array.from(new Set(Object.values(SYMBOLS).flat()));
-const INITIAL_BALANCE = 1000000;
-const SIMULATION_INTERVAL = 3000; 
+const INITIAL_BALANCE = 50000;
+const SIMULATION_INTERVAL = 5000; 
 
 const BASE_PRICES: Record<string, number> = {
   "NABIL": 498.6, "NMB": 235.1, "NICA": 321, "GBIME": 228, "EBL": 647.29, "HBL": 187.9, "NIBL": 0, "PCBL": 257, "SBL": 374.9, "SCB": 624.79, "ADBL": 288, "CZBIL": 191.5, "MBL": 220, "KBL": 178.4, "LBL": 173, "SANIMA": 319, "PRVU": 182, "BOKL": 207.3, "MEGA": 219, "SRBL": 173.1, "MNBBL": 342.6, "JBBL": 318, "GBBL": 374, "SHINE": 391, "SADBL": 381, "CORBL": 1450, "SAPDBL": 793.1, "MLBL": 354.5, "KSBBL": 429.5, "GUFL": 486, "PFL": 358, "MFIL": 709, "CFCL": 462.1, "ICFC": 620, "BFCL": 165, "SFCL": 375, "NLIC": 750.5, "LICN": 876, "ALICL": 457, "PLIC": 340, "SLICL": 387, "SNLI": 504, "ILI": 442, "ULI": 393.8, "NICL": 504.9, "SICL": 635, "NIL": 602.5, "PRIN": 657, "IGI": 414, "SALICO": 600.3, "SGIC": 472, "SPIL": 740, "HEI": 500, "RBCL": 14940, "CHCL": 498, "BPCL": 714, "NHPC": 190.8, "SHPC": 515, "RADHI": 730, "SAHAS": 543, "UPCL": 359, "UNHPL": 481.5, "AKPL": 244, "API": 289, "NGPL": 387.5, "NYADI": 370, "DHPL": 288, "RHPL": 268.8, "HPPL": 472, "CIT": 1809.5, "HIDCL": 254.5, "NIFRA": 261.2, "NRN": 1345.2, "HATHY": 886.9, "ENL": 890, "UNL": 47200, "HDL": 1132.2, "SHIVM": 575, "BNT": 11952, "BNL": 15904.9, "SARBTM": 865, "GCIL": 405.3, "SONA": 414.8, "NLO": 254.1, "OMPL": 1239, "STC": 5405, "BBC": 4864, "NTC": 895.4, "OHL": 691.1, "TRH": 708, "YHL": 600, "AHPC": 272.3
@@ -36,22 +37,12 @@ interface ExtendedStock extends Stock {
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [isMarketOpen, setIsMarketOpen] = useState(true);
+  const [isMarketOpen, setIsMarketOpen] = useState(false);
   
   const [stocks, setStocks] = useState<ExtendedStock[]>(() => {
     return ALL_FLAT_SYMBOLS.map(symbol => {
-      const initialPrice = BASE_PRICES[symbol] || 100.0;
-      return {
-        Symbol: symbol,
-        LTP: initialPrice,
-        Change: 0,
-        Open: initialPrice,
-        High: initialPrice,
-        Low: initialPrice,
-        Volume: Math.floor(Math.random() * 10000),
-        Amount: 0,
-        isLive: true
-      };
+      const price = BASE_PRICES[symbol] || 100.0;
+      return { Symbol: symbol, LTP: price, Change: 0, Open: price, High: price, Low: price, Volume: 1000, Amount: 0, isLive: true };
     });
   });
   
@@ -60,134 +51,164 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [portfolio, setPortfolio] = useState<Portfolio>({ balance: INITIAL_BALANCE, holdings: [], history: [] });
 
-  // Persist function to save current state as "Last Known Price"
-  const persistMarketState = useCallback(async (marketStocks: ExtendedStock[]) => {
-    if (!db) return;
-    const batch = writeBatch(db);
-    marketStocks.forEach(s => {
-      const stockRef = doc(db, 'market', s.Symbol);
-      batch.set(stockRef, { 
-        symbol: s.Symbol, 
-        ltp: s.LTP, 
-        updatedAt: Date.now() 
-      }, { merge: true });
+  const isAdmin = useMemo(() => user?.uid === ADMIN_UID, [user]);
+
+  // Handle Authentication State Change
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthLoading(false);
     });
-    try {
-      await batch.commit();
-      console.log("Nexora State Persisted to Vault");
-    } catch (err) {
-      console.error("Persistence failed:", err);
-    }
+    return () => unsubscribe();
   }, []);
 
-  // Handle Manual Close/Open
+  // Handle Name Update
+  const handleUpdateName = async (newName: string) => {
+    if (user) {
+      await updateProfile(user, { displayName: newName });
+      // Trigger a local state refresh to reflect the new display name
+      setUser({ ...user, displayName: newName } as User);
+    }
+  };
+
+  // 1. GLOBAL MARKET STATE (Sync for everyone)
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(db, 'settings', 'market'), (snap) => {
+      if (snap.exists()) {
+        setIsMarketOpen(snap.data().isOpen);
+      } else if (isAdmin) {
+        setDoc(doc(db, 'settings', 'market'), { isOpen: false });
+      }
+    });
+    return () => unsub();
+  }, [user, isAdmin]);
+
+  // 2. LIVE PRICE LISTENER (Everyone listens to Firestore broadcast)
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(collection(db, 'market'), (snap) => {
+      const updates: Record<string, any> = {};
+      snap.forEach(doc => {
+        updates[doc.id] = doc.data();
+      });
+
+      setStocks(current => current.map(s => {
+        const up = updates[s.Symbol];
+        if (!up) return s;
+        return {
+          ...s,
+          LTP: up.ltp,
+          Change: up.change || s.Change,
+          High: up.high || s.High,
+          Low: up.low || s.Low,
+          Volume: up.volume || s.Volume
+        };
+      }));
+    });
+    return () => unsub();
+  }, [user]);
+
+  // 3. ADMIN SIMULATION ENGINE (Exclusive to Overseer)
+  useEffect(() => {
+    if (!isAdmin || !isMarketOpen || !user) return;
+
+    const simInterval = setInterval(async () => {
+      const batch = writeBatch(db);
+      
+      const updatedStocks = stocks.map(stock => {
+        const steps = [1.0, 0.1, 0.01];
+        const step = steps[Math.floor(Math.random() * steps.length)];
+        const direction = Math.random() > 0.49 ? 1 : -1;
+        const delta = direction * step;
+        const newLTP = Number(Math.max(0.01, stock.LTP + delta).toFixed(2));
+        
+        const newStock = {
+          ...stock,
+          LTP: newLTP,
+          Change: stock.Open !== 0 ? ((newLTP - stock.Open) / stock.Open) * 100 : 0,
+          High: Math.max(stock.High, newLTP),
+          Low: Math.min(stock.Low, newLTP),
+          Volume: stock.Volume + Math.floor(Math.random() * 2)
+        };
+
+        // Only push updates for a random subset to save Firebase quota
+        if (Math.random() > 0.7) {
+          batch.set(doc(db, 'market', stock.Symbol), {
+            ltp: newStock.LTP,
+            change: newStock.Change,
+            high: newStock.High,
+            low: newStock.Low,
+            volume: newStock.Volume,
+            updatedAt: Date.now()
+          }, { merge: true });
+        }
+
+        return newStock;
+      });
+
+      try {
+        await batch.commit();
+        setStocks(updatedStocks);
+      } catch (e) {
+        console.error("Admin Broadcast Failed:", e);
+      }
+    }, SIMULATION_INTERVAL);
+
+    return () => clearInterval(simInterval);
+  }, [isAdmin, isMarketOpen, user, stocks]);
+
+  // 4. ADMIN COMMANDS
   const toggleMarket = async () => {
-    const nextState = !isMarketOpen;
-    setIsMarketOpen(nextState);
-    
-    // If closing, do one final sync
-    if (!nextState) {
-      setIsSyncing(true);
-      await persistMarketState(stocks);
+    if (!isAdmin) return;
+    setIsSyncing(true);
+    try {
+      await updateDoc(doc(db, 'settings', 'market'), { isOpen: !isMarketOpen });
+    } finally {
       setIsSyncing(false);
     }
   };
 
-  useEffect(() => {
-    return onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setAuthLoading(false);
-    });
-  }, []);
+  const resetMarket = async () => {
+    if (!isAdmin || !window.confirm("RESET ALL MARKET DATA? This will restore original LTP values globally.")) return;
+    setIsSyncing(true);
+    try {
+      const batch = writeBatch(db);
+      ALL_FLAT_SYMBOLS.forEach(symbol => {
+        const price = BASE_PRICES[symbol] || 100.0;
+        batch.set(doc(db, 'market', symbol), {
+          ltp: price,
+          change: 0,
+          high: price,
+          low: price,
+          volume: 1000,
+          updatedAt: Date.now()
+        });
+      });
+      await batch.commit();
+      alert("Nexora Core Reset Complete.");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
+  // 5. PORTFOLIO LOGIC
   useEffect(() => {
     if (!user) return;
-    const userRef = doc(db, 'portfolios', user.uid);
-    const unsub = onSnapshot(userRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setPortfolio(snapshot.data() as Portfolio);
+    const unsub = onSnapshot(doc(db, 'portfolios', user.uid), (snap) => {
+      if (snap.exists()) {
+        setPortfolio(snap.data() as Portfolio);
       } else {
-        const initial = { balance: INITIAL_BALANCE, holdings: [], history: [] };
-        setDoc(userRef, initial);
-        setPortfolio(initial);
+        setDoc(doc(db, 'portfolios', user.uid), { balance: INITIAL_BALANCE, holdings: [], history: [] });
       }
     });
     return () => unsub();
   }, [user]);
 
-  useEffect(() => {
-    if (!user) return;
-    const fetchMarketFromDB = async () => {
-      setIsSyncing(true);
-      try {
-        const querySnapshot = await getDocs(collection(db, 'market'));
-        const dbPrices: Record<string, number> = {};
-        querySnapshot.forEach((doc) => {
-          dbPrices[doc.id] = doc.data().ltp;
-        });
-
-        setStocks(prev => prev.map(s => {
-          const storedPrice = dbPrices[s.Symbol];
-          const price = typeof storedPrice === 'number' ? storedPrice : s.LTP;
-          return {
-            ...s,
-            LTP: price,
-            Open: price,
-            High: price,
-            Low: price
-          };
-        }));
-      } catch (err) {
-        console.error("Nexora Sync Error:", err);
-      } finally {
-        setIsSyncing(false);
-      }
-    };
-    fetchMarketFromDB();
-  }, [user]);
-
-  // Simulation Engine (only runs when market is open)
-  useEffect(() => {
-    const simInterval = setInterval(() => {
-      if (!isMarketOpen || !user) return; 
-
-      setStocks(current => 
-        current.map(stock => {
-          const steps = [1.0, 0.1, 0.01];
-          const step = steps[Math.floor(Math.random() * steps.length)];
-          const direction = Math.random() > 0.49 ? 1 : -1;
-          const delta = direction * step;
-          const newLTP = Number(Math.max(0.01, stock.LTP + delta).toFixed(2));
-          
-          return {
-            ...stock,
-            LTP: newLTP,
-            Change: stock.Open !== 0 ? ((newLTP - stock.Open) / stock.Open) * 100 : 0,
-            High: Math.max(stock.High, newLTP),
-            Low: Math.min(stock.Low, newLTP),
-            Volume: stock.Volume + Math.floor(Math.random() * 5)
-          };
-        })
-      );
-    }, SIMULATION_INTERVAL);
-
-    return () => clearInterval(simInterval);
-  }, [isMarketOpen, user]);
-
-  // Periodic Auto-Persist (every 30s) if market is open
-  useEffect(() => {
-    const persistInterval = setInterval(() => {
-      if (isMarketOpen && user) {
-        persistMarketState(stocks);
-      }
-    }, 30000);
-    return () => clearInterval(persistInterval);
-  }, [stocks, isMarketOpen, user, persistMarketState]);
-
   const handleTrade = async (type: 'BUY' | 'SELL', symbol: string, quantity: number, price: number) => {
     if (!user) return;
     if (!isMarketOpen) {
-      alert("Nexora Market is currently closed. Execution halted.");
+      alert("ACCESS DENIED: Market is currently halted.");
       return;
     }
 
@@ -195,13 +216,13 @@ const App: React.FC = () => {
     const totalCost = quantity * price;
 
     if (type === 'BUY' && portfolio.balance < totalCost) {
-      alert("Insufficient Portfolio Balance.");
+      alert("Insufficient Capital.");
       return;
     }
 
     const existingHolding = portfolio.holdings.find(h => h.symbol === symbol);
     if (type === 'SELL' && (!existingHolding || existingHolding.quantity < quantity)) {
-      alert("Insufficient Shares in Vault.");
+      alert("Insufficient Inventory.");
       return;
     }
 
@@ -219,28 +240,16 @@ const App: React.FC = () => {
       newHoldings = newQty === 0 ? newHoldings.filter(h => h.symbol !== symbol) : newHoldings.map(h => h.symbol === symbol ? { ...h, quantity: newQty } : h);
     }
 
-    const transaction: Transaction = {
-      id: Math.random().toString(36).substr(2, 9),
-      symbol, type, quantity, price, timestamp: Date.now()
-    };
-
     await updateDoc(userRef, {
       balance: increment(type === 'BUY' ? -totalCost : totalCost),
       holdings: newHoldings,
-      history: [transaction, ...portfolio.history].slice(0, 100)
+      history: [{ id: Math.random().toString(36).substr(2, 9), symbol, type, quantity, price, timestamp: Date.now() }, ...portfolio.history].slice(0, 50)
     });
   };
 
   const selectedStock = useMemo(() => stocks.find(s => s.Symbol === selectedSymbol), [stocks, selectedSymbol]);
 
-  if (authLoading) {
-    return (
-      <div className="h-screen bg-[#080a0c] flex items-center justify-center">
-        <Loader2 className="animate-spin text-[#2ebd85]" size={32} />
-      </div>
-    );
-  }
-
+  if (authLoading) return <div className="h-screen bg-[#080a0c] flex items-center justify-center"><Loader2 className="animate-spin text-[#2ebd85]" size={32} /></div>;
   if (!user) return <Auth />;
 
   return (
@@ -273,46 +282,43 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-6">
-          {/* Market Controller Toggle */}
-          <div className="flex items-center gap-3 bg-[#080a0c] px-3 py-1 rounded-full border border-[#1c2127] group">
+          {/* OVERSEER CONTROLS */}
+          <div className={`flex items-center gap-3 bg-[#080a0c] px-3 py-1 rounded-full border border-[#1c2127] ${isAdmin ? 'ring-1 ring-[#2ebd85]/40 shadow-lg shadow-[#2ebd85]/5' : ''}`}>
+            {isAdmin && <ShieldCheck size={14} className="text-[#2ebd85]" />}
             <div className={`w-2 h-2 rounded-full ${isMarketOpen ? 'bg-[#2ebd85] animate-pulse' : 'bg-rose-500'}`}></div>
             <span className={`text-[9px] font-black uppercase tracking-widest ${isMarketOpen ? 'text-[#2ebd85]' : 'text-rose-500'}`}>
-              {isMarketOpen ? 'Market Open' : 'Market Closed'}
+              {isMarketOpen ? 'Broadcasting Live' : 'Trading Halted'}
             </span>
-            <button 
-              onClick={toggleMarket}
-              className={`p-1.5 rounded-full transition-all ${isMarketOpen ? 'hover:bg-rose-500/20 text-slate-600' : 'bg-rose-500 text-white shadow-lg shadow-rose-500/20'}`}
-              title={isMarketOpen ? "Close Market" : "Open Market"}
-            >
-              <Power size={12} />
-            </button>
+            {isAdmin && (
+              <div className="flex items-center border-l border-[#1c2127] ml-2 pl-2 gap-2">
+                <button 
+                  onClick={toggleMarket}
+                  disabled={isSyncing}
+                  className={`p-1.5 rounded-full transition-all ${isMarketOpen ? 'text-slate-600 hover:text-rose-500 hover:bg-rose-500/10' : 'bg-rose-600 text-white'}`}
+                  title={isMarketOpen ? "Halt Global Market" : "Open Global Market"}
+                >
+                  {isSyncing ? <Loader2 size={12} className="animate-spin" /> : <Power size={12} />}
+                </button>
+                <button 
+                  onClick={resetMarket}
+                  disabled={isSyncing}
+                  className="p-1.5 text-slate-600 hover:text-[#2ebd85] hover:bg-[#2ebd85]/10 rounded-full transition-all"
+                  title="Reset Global Prices"
+                >
+                  <RefreshCw size={12} />
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col items-end">
-            <div className="flex items-center gap-2">
-               {isSyncing && <Loader2 size={10} className="animate-spin text-[#2ebd85]" />}
-               <span className="text-[9px] text-slate-600 font-black uppercase tracking-widest">
-                 {isSyncing ? 'Synchronizing State' : 'Engine Ready'}
-               </span>
-            </div>
-            <div className="w-24 h-1 bg-slate-900 rounded-full mt-1 overflow-hidden border border-white/5">
-               <div className="h-full bg-[#2ebd85] transition-all duration-500" style={{ width: isSyncing ? '40%' : '100%' }}></div>
-            </div>
+            <span className="text-[9px] text-slate-600 font-black uppercase opacity-60">Trading Power</span>
+            <span className="text-sm font-black text-white tabular-nums">NPR {portfolio.balance.toLocaleString()}</span>
           </div>
-          
-          <div className="flex items-center gap-4 border-l border-[#1c2127] pl-6">
-            <div className="flex flex-col items-end">
-              <span className="text-[9px] text-slate-600 font-black uppercase opacity-60">Portfolio Power</span>
-              <span className="text-sm font-black text-white tabular-nums">NPR {portfolio.balance.toLocaleString()}</span>
-            </div>
-            <button 
-              onClick={() => signOut(auth)}
-              className="p-2 hover:bg-rose-500/10 text-slate-600 hover:text-rose-500 rounded-lg transition-colors"
-              title="Sign Out"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
+
+          <button onClick={() => signOut(auth)} className="p-2 hover:bg-rose-500/10 text-slate-600 hover:text-rose-500 rounded-lg transition-colors">
+            <LogOut size={18} />
+          </button>
         </div>
       </header>
 
@@ -328,8 +334,8 @@ const App: React.FC = () => {
         {activeTab === AppTab.PORTFOLIO && (
           <div className="flex-1 overflow-y-auto custom-scrollbar p-8 bg-[#080a0c]">
             <div className="max-w-7xl mx-auto space-y-8">
+              <PortfolioView portfolio={portfolio} stocks={stocks} onTrade={handleTrade} user={user} onUpdateName={handleUpdateName} />
               <DashboardStats portfolio={portfolio} stocks={stocks} />
-              <PortfolioView portfolio={portfolio} stocks={stocks} onTrade={handleTrade} />
             </div>
           </div>
         )}

@@ -1,4 +1,4 @@
-
+// Standard modular imports for Firebase v9+
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
@@ -13,6 +13,7 @@ const firebaseConfig = {
   measurementId: "G-J63573GY6M"
 };
 
+// Initialize Firebase app and services
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
