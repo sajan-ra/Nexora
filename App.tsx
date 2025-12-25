@@ -52,7 +52,7 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [portfolio, setPortfolio] = useState<Portfolio>({ balance: INITIAL_BALANCE, holdings: [], history: [] });
 
-  // Oscillation State
+  // Simulation State: Momentum and Trend Persistence
   const trendPhaseRef = useRef<Record<string, { bias: number, duration: number }>>({});
 
   const isAdmin = useMemo(() => user?.uid === ADMIN_UID, [user]);
@@ -106,7 +106,7 @@ const App: React.FC = () => {
     return () => unsub();
   }, [user]);
 
-  // BALANCED OSCILLATION ENGINE
+  // HIGH-OSCILLATION ENGINE
   useEffect(() => {
     if (!isAdmin || !isMarketOpen || !user) return;
 
@@ -117,41 +117,36 @@ const App: React.FC = () => {
         const basePrice = BASE_PRICES[stock.Symbol] || 100.0;
         let phase = trendPhaseRef.current[stock.Symbol] || { bias: 0, duration: 0 };
 
-        // 1. CYCLE: Every few seconds, flip the trend bias to force up/down movement
+        // 1. CYCLE LOGIC: Change trend direction every few cycles
         if (phase.duration <= 0) {
-          phase.bias = (Math.random() * 2 - 1) * 0.0015; // Small random drift
-          phase.duration = 4 + Math.floor(Math.random() * 6);
+          phase.bias = (Math.random() * 2 - 1) * 0.002; // Small random bias
+          phase.duration = 5 + Math.floor(Math.random() * 8);
         }
         phase.duration--;
 
-        // 2. GRAVITY (Mean Reversion): Pull back to base price
-        // If price is high, gravity is positive (pulling down). If low, negative (pulling up).
+        // 2. MEAN REVERSION: Pull price back to center if it deviates too far
         const deviation = (stock.LTP - basePrice) / basePrice;
-        const gravity = deviation * 0.0008; 
+        const gravitationalPull = deviation * 0.001; 
 
-        // 3. JITTER: Natural market noise
-        const jitter = (Math.random() * 2 - 1) * 0.0005;
+        // 3. NOISE: High-frequency market jitter
+        const jitter = (Math.random() * 2 - 1) * 0.0008;
 
-        // 4. PRICE UPDATE
-        const finalMove = phase.bias - gravity + jitter;
-        const newLTP = Number(Math.max(0.1, stock.LTP * (1 + finalMove)).toFixed(2));
-
-        // 5. WICK CALCULATION: Ensure High/Low always surround LTP
-        const wickOffset = stock.LTP * 0.0004;
-        const newHigh = Math.max(stock.High, newLTP, newLTP + (Math.random() * wickOffset));
-        const newLow = Math.min(stock.Low, newLTP, newLTP - (Math.random() * wickOffset));
+        // 4. CALCULATION
+        const movement = phase.bias - gravitationalPull + jitter;
+        const newLTP = Number(Math.max(0.1, stock.LTP * (1 + movement)).toFixed(2));
 
         const newStock = {
           ...stock,
           LTP: newLTP,
           Change: stock.Open !== 0 ? ((newLTP - stock.Open) / stock.Open) * 100 : 0,
-          High: newHigh,
-          Low: newLow,
-          Volume: stock.Volume + Math.floor(Math.random() * 12)
+          High: Math.max(stock.High, newLTP, newLTP + (Math.random() * stock.LTP * 0.001)), // Ensure High > LTP for wicks
+          Low: Math.min(stock.Low, newLTP, newLTP - (Math.random() * stock.LTP * 0.001)),  // Ensure Low < LTP for wicks
+          Volume: stock.Volume + Math.floor(Math.random() * 10)
         };
 
         trendPhaseRef.current[stock.Symbol] = phase;
 
+        // Spread updates to avoid hitting Firestore limits if many stocks
         if (Math.random() > 0.4) {
           batch.set(doc(db, 'market', stock.Symbol), {
             ltp: newStock.LTP,
@@ -170,7 +165,7 @@ const App: React.FC = () => {
         await batch.commit();
         setStocks(updatedStocks);
       } catch (e) {
-        console.error("Simulation Error:", e);
+        console.error("Simulation Sync Fail:", e);
       }
     }, SIMULATION_INTERVAL);
 
