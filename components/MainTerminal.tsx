@@ -10,7 +10,7 @@ import {
   Tooltip, 
   ResponsiveContainer 
 } from 'recharts';
-import { Wifi, WifiOff, Moon, Target, Zap } from 'lucide-react';
+import { Moon, Zap } from 'lucide-react';
 
 const TIMEFRAME_MS = 15000; // 15-second candle intervals
 
@@ -37,8 +37,8 @@ interface Candle {
 }
 
 /**
- * High-Precision Candlestick Component
- * Renders the "Pillar" body and the "Sticks" (Wicks)
+ * Professional Candlestick Anatomy Component
+ * Renders the "Upper Shadow", "Lower Shadow", and the "Real Body" (Pillar)
  */
 const Candlestick = (props: any) => {
   const { x, y, width, height, payload } = props;
@@ -50,58 +50,70 @@ const Candlestick = (props: any) => {
   
   // Recharts passes 'y' as the pixel for the HIGH value 
   // and 'height' as the total pixel distance to the LOW value.
-  // We calculate a pixel-per-unit ratio to position the body precisely.
   const priceRange = high - low;
-  const ratio = priceRange === 0 ? 0 : height / priceRange;
+  const ratio = priceRange <= 0 ? 0 : height / priceRange;
 
-  // Calculate Body Y coordinates relative to the 'y' (High) pixel
+  // Calculate Body coordinates relative to the 'y' (High) pixel
   const bodyMax = Math.max(open, close);
   const bodyMin = Math.min(open, close);
   
   const bodyTop = y + (high - bodyMax) * ratio;
   const bodyBottom = y + (high - bodyMin) * ratio;
-  const bodyHeight = Math.max(1.5, bodyBottom - bodyTop);
+  const bodyHeight = Math.max(1, bodyBottom - bodyTop);
 
   const centerX = x + width / 2;
 
   return (
     <g>
-      {/* 1. The "Stick" (Full Wick from High to Low) */}
+      {/* 1. UPPER SHADOW (High to Top of Body) */}
       <line 
         x1={centerX} 
         y1={y} 
         x2={centerX} 
-        y2={y + height} 
+        y2={bodyTop} 
         stroke={color} 
-        strokeWidth={1.2}
-        strokeLinecap="round"
+        strokeWidth={1.5}
+        strokeLinecap="butt"
       />
 
-      {/* 2. The "Pillar" (The Candle Body) */}
+      {/* 2. LOWER SHADOW (Bottom of Body to Low) */}
+      <line 
+        x1={centerX} 
+        y1={bodyBottom} 
+        x2={centerX} 
+        y2={y + height} 
+        stroke={color} 
+        strokeWidth={1.5}
+        strokeLinecap="butt"
+      />
+
+      {/* 3. THE REAL BODY (Pillar) */}
       <rect 
         x={x} 
         y={bodyTop} 
         width={width} 
         height={bodyHeight} 
         fill={color} 
-        fillOpacity={isForming ? 0.6 : 0.9}
+        fillOpacity={isForming ? 0.7 : 1}
         stroke={color} 
         strokeWidth={0.5}
-        className={isForming ? "animate-pulse" : ""}
+        rx={1}
+        className={isForming ? "transition-all duration-300 ease-out" : ""}
       />
 
-      {/* 3. Forming Indicator (Small glow at the current price) */}
+      {/* 4. Forming Glow (Current Price Point) */}
       {isForming && (
-        <circle 
-          cx={centerX} 
-          cy={isUp ? bodyTop : bodyBottom} 
-          r={2} 
-          fill={color} 
-          className="animate-ping"
+        <rect
+          x={x - 2}
+          y={(isUp ? bodyTop : bodyBottom) - 1}
+          width={width + 4}
+          height={2}
+          fill={color}
+          className="animate-pulse"
         />
       )}
 
-      {/* 4. Pattern Annotations */}
+      {/* 5. Pattern Label */}
       {payload.pattern && (
         <text 
           x={centerX} 
@@ -110,7 +122,7 @@ const Candlestick = (props: any) => {
           fill={color} 
           fontSize="8" 
           fontWeight="900" 
-          className="uppercase tracking-widest"
+          className="uppercase tracking-widest drop-shadow-md"
         >
           {payload.pattern}
         </text>
@@ -123,22 +135,22 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
   const [historyBuffer, setHistoryBuffer] = useState<Record<string, Candle[]>>({});
   const currentOHLCRef = useRef<Record<string, { o: number, h: number, l: number, startTime: number }>>({});
 
-  // Initial Seeding: Ensures the chart is never empty
+  // Initialize history with continuity
   useEffect(() => {
     if (!stock) return;
     const symbol = stock.Symbol;
 
     if (!historyBuffer[symbol]) {
       const seeded: Candle[] = [];
-      let base = stock.LTP;
+      let lastClose = stock.LTP;
       const now = Date.now();
       
-      for (let i = 40; i > 0; i--) {
-        const drift = (Math.random() * 2 - 1) * (base * 0.003);
-        const o = base;
-        const c = base + drift;
-        const h = Math.max(o, c) + Math.random() * (base * 0.001);
-        const l = Math.min(o, c) - Math.random() * (base * 0.001);
+      for (let i = 45; i > 0; i--) {
+        const drift = (Math.random() * 2 - 1) * (lastClose * 0.003);
+        const o = lastClose; // Continuity: Open equals previous Close
+        const c = o + drift;
+        const h = Math.max(o, c) + Math.random() * (o * 0.0015);
+        const l = Math.min(o, c) - Math.random() * (o * 0.0015);
         
         seeded.push({
           time: now - (i * TIMEFRAME_MS),
@@ -148,15 +160,16 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
           close: c,
           range: [l, h]
         });
-        base = c;
+        lastClose = c;
       }
       
       setHistoryBuffer(prev => ({ ...prev, [symbol]: seeded }));
-      currentOHLCRef.current[symbol] = { o: stock.LTP, h: stock.LTP, l: stock.LTP, startTime: now };
+      // Continuity for the first real candle
+      currentOHLCRef.current[symbol] = { o: lastClose, h: lastClose, l: lastClose, startTime: now };
     }
   }, [stock?.Symbol]);
 
-  // Real-time Tick Processor
+  // Real-time Continuity Engine
   useEffect(() => {
     if (!stock) return;
 
@@ -166,7 +179,16 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
 
     setHistoryBuffer(prev => {
       const history = prev[symbol] || [];
-      const current = currentOHLCRef.current[symbol] || { o: currentPrice, h: currentPrice, l: currentPrice, startTime: now };
+      // Get the last closed candle to ensure continuity
+      const lastClosed = history.filter(c => !c.isForming).slice(-1)[0];
+      
+      // If no tracker exists, start one based on last closed or current price
+      if (!currentOHLCRef.current[symbol]) {
+        const startPrice = lastClosed ? lastClosed.close : currentPrice;
+        currentOHLCRef.current[symbol] = { o: startPrice, h: startPrice, l: startPrice, startTime: now };
+      }
+
+      const current = currentOHLCRef.current[symbol];
 
       // TIME-INTERVAL LOGIC: Close candle if interval expired
       if (now - current.startTime >= TIMEFRAME_MS) {
@@ -179,7 +201,7 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
           range: [Math.min(current.l, currentPrice), Math.max(current.h, currentPrice)]
         };
 
-        // NUMERIC PATTERN RECOGNITION (As requested)
+        // NUMERIC PATTERN RECOGNITION
         const body = Math.abs(closedCandle.close - closedCandle.open);
         const range = closedCandle.high - closedCandle.low;
         const upperWick = closedCandle.high - Math.max(closedCandle.open, closedCandle.close);
@@ -191,21 +213,22 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
            else if (upperWick >= 2 * body && lowerWick <= 0.3 * body && body > 0) closedCandle.pattern = "Star";
         }
         
-        // Engulfing Check (Logic: Comparing against previous candle)
         if (history.length > 0) {
-          const prevC = history[history.length - 1];
-          const isBullEng = prevC.close < prevC.open && closedCandle.close > closedCandle.open && closedCandle.open < prevC.close && closedCandle.close > prevC.open;
-          const isBearEng = prevC.close > prevC.open && closedCandle.close < closedCandle.open && closedCandle.open > prevC.close && closedCandle.close < prevC.open;
-          if (isBullEng) closedCandle.pattern = "Bull.Eng";
-          if (isBearEng) closedCandle.pattern = "Bear.Eng";
+          const prevC = history.filter(c => !c.isForming).slice(-1)[0];
+          if (prevC) {
+            const isBullEng = prevC.close < prevC.open && closedCandle.close > closedCandle.open && closedCandle.open < prevC.close && closedCandle.close > prevC.open;
+            const isBearEng = prevC.close > prevC.open && closedCandle.close < closedCandle.open && closedCandle.open > prevC.close && closedCandle.close < prevC.open;
+            if (isBullEng) closedCandle.pattern = "B.Eng";
+            if (isBearEng) closedCandle.pattern = "S.Eng";
+          }
         }
 
-        // Reset the tracker for the next interval
+        // CONTINUITY: New candle starts exactly where this one closed
         currentOHLCRef.current[symbol] = { o: currentPrice, h: currentPrice, l: currentPrice, startTime: now };
-        return { ...prev, [symbol]: [...history.filter(c => !c.isForming), closedCandle].slice(-50) };
+        return { ...prev, [symbol]: [...history.filter(c => !c.isForming), closedCandle].slice(-55) };
       }
 
-      // PILLAR GROWTH LOGIC: Update current interval trackers
+      // PILLAR GROWTH LOGIC
       currentOHLCRef.current[symbol] = {
         ...current,
         h: Math.max(current.h, currentPrice),
@@ -250,13 +273,13 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
             <div className="flex items-center gap-3">
               <h2 className="text-xl font-black text-white leading-none tracking-tighter uppercase">{stock.Symbol}</h2>
               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[8px] font-black uppercase border border-[#2ebd85]/40 bg-[#2ebd85]/10 text-[#2ebd85]">
-                <Zap size={10} fill="#2ebd85" /> Real-Time Engine
+                <Zap size={10} fill="#2ebd85" /> Market Continuity Engaged
               </div>
             </div>
             <div className="flex gap-4 text-[9px] text-slate-600 font-black mt-1 uppercase tracking-tighter">
-              <span>High <span className="text-slate-400 tabular-nums">{stock.High.toFixed(2)}</span></span>
-              <span>Low <span className="text-slate-400 tabular-nums">{stock.Low.toFixed(2)}</span></span>
-              <span>Vol <span className="text-slate-400 tabular-nums">{stock.Volume.toLocaleString()}</span></span>
+              <span>H <span className="text-slate-400 tabular-nums">{stock.High.toFixed(2)}</span></span>
+              <span>L <span className="text-slate-400 tabular-nums">{stock.Low.toFixed(2)}</span></span>
+              <span>V <span className="text-slate-400 tabular-nums">{stock.Volume.toLocaleString()}</span></span>
             </div>
           </div>
           <div className="h-8 w-px bg-[#1c2127]"></div>
@@ -275,11 +298,11 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
       <div className="flex-1 relative p-4 flex flex-col min-h-[400px]">
         {!isMarketOpen && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#080a0c]/70 backdrop-blur-[4px] pointer-events-none">
-            <div className="bg-[#111418] border border-[#1c2127] px-8 py-4 rounded-3xl flex items-center gap-5 shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+            <div className="bg-[#111418] border border-[#1c2127] px-8 py-4 rounded-3xl flex items-center gap-5 shadow-2xl">
               <Moon size={24} className="text-slate-500 animate-pulse" />
               <div className="flex flex-col">
-                 <span className="text-xs font-black uppercase tracking-[0.3em] text-slate-200">Market Suspended</span>
-                 <span className="text-[9px] font-bold text-slate-500 uppercase mt-1">Simulated Trading Only</span>
+                 <span className="text-xs font-black uppercase tracking-[0.3em] text-slate-200">Terminal Halted</span>
+                 <span className="text-[9px] font-bold text-slate-500 uppercase mt-1">Simulated Feed Only</span>
               </div>
             </div>
           </div>
@@ -294,12 +317,12 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
         <div className="flex-1 relative z-10">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={displayData} margin={{ top: 40, right: 10, left: 0, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="2 4" stroke="#1c2127" vertical={false} strokeOpacity={0.5} />
+              <CartesianGrid strokeDasharray="2 4" stroke="#1c2127" vertical={false} strokeOpacity={0.4} />
               <XAxis dataKey="time" hide />
               <YAxis 
                 orientation="right" 
                 domain={['auto', 'auto']} 
-                tick={{ fill: '#334155', fontSize: 11, fontWeight: '900' }} 
+                tick={{ fill: '#475569', fontSize: 11, fontWeight: '900', fontFamily: 'Inter' }} 
                 axisLine={false} 
                 tickLine={false} 
                 width={70}
@@ -316,15 +339,15 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
                       <div className="bg-[#111418] border border-[#1c2127] p-4 rounded-xl shadow-2xl min-w-[140px]">
                         <div className="flex flex-col gap-2 text-[10px] font-black uppercase">
                           <div className="flex justify-between border-b border-[#1c2127] pb-1">
-                            <span className="text-slate-600">Period</span>
+                            <span className="text-slate-600">Interval</span>
                             <span className="text-slate-400">{new Date(d.time).toLocaleTimeString()}</span>
                           </div>
-                          <div className="flex justify-between"><span className="text-slate-600">Open</span><span className="text-white">{d.open.toFixed(2)}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-600">High</span><span className="text-[#2ebd85]">{d.high.toFixed(2)}</span></div>
-                          <div className="flex justify-between"><span className="text-slate-600">Low</span><span className="text-[#f6465d]">{d.low.toFixed(2)}</span></div>
-                          <div className="flex justify-between border-t border-[#1c2127] pt-1"><span className="text-slate-600">Close</span><span className="text-white">{d.close.toFixed(2)}</span></div>
+                          <div className="flex justify-between"><span className="text-slate-600">O</span><span className="text-white">{d.open.toFixed(2)}</span></div>
+                          <div className="flex justify-between"><span className="text-[#2ebd85]">H</span><span className="text-white">{d.high.toFixed(2)}</span></div>
+                          <div className="flex justify-between"><span className="text-[#f6465d]">L</span><span className="text-white">{d.low.toFixed(2)}</span></div>
+                          <div className="flex justify-between border-t border-[#1c2127] pt-1"><span className="text-slate-600">C</span><span className="text-white">{d.close.toFixed(2)}</span></div>
                           {d.pattern && (
-                            <div className="mt-2 text-center bg-[#2ebd85]/20 p-2 rounded-lg text-[#2ebd85] border border-[#2ebd85]/30">
+                            <div className="mt-2 text-center bg-[#2ebd85]/10 p-2 rounded-lg text-[#2ebd85] border border-[#2ebd85]/20 animate-pulse">
                               {d.pattern}
                             </div>
                           )}
@@ -345,7 +368,6 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
         </div>
       </div>
 
-      {/* Footer Stats */}
       <div className="h-64 border-t border-[#1c2127] flex flex-col bg-[#111418]/30">
         <div className="px-5 py-2.5 border-b border-[#1c2127] flex items-center justify-between">
           <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Global Order Stream</span>
