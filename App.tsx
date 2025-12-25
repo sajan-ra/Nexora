@@ -52,9 +52,8 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [portfolio, setPortfolio] = useState<Portfolio>({ balance: INITIAL_BALANCE, holdings: [], history: [] });
 
-  // Simulation Engine State
-  const momentumRef = useRef<Record<string, number>>({});
-  const trendPhaseRef = useRef<Record<string, { target: number, counter: number }>>({});
+  // Simulation State: Momentum and Trend Persistence
+  const trendPhaseRef = useRef<Record<string, { bias: number, duration: number }>>({});
 
   const isAdmin = useMemo(() => user?.uid === ADMIN_UID, [user]);
 
@@ -107,7 +106,7 @@ const App: React.FC = () => {
     return () => unsub();
   }, [user]);
 
-  // BALANCED TREND ENGINE (Admin only)
+  // HIGH-OSCILLATION ENGINE
   useEffect(() => {
     if (!isAdmin || !isMarketOpen || !user) return;
 
@@ -115,57 +114,40 @@ const App: React.FC = () => {
       const batch = writeBatch(db);
       
       const updatedStocks = stocks.map(stock => {
-        let phase = trendPhaseRef.current[stock.Symbol] || { target: 0, counter: 0 };
         const basePrice = BASE_PRICES[stock.Symbol] || 100.0;
-        
-        // 1. PHASE MANAGEMENT
-        if (phase.counter <= 0) {
-          // Smaller target bias to avoid runaway trends
-          phase.target = (Math.random() * 2 - 1) * 0.0015; 
-          phase.counter = 10 + Math.floor(Math.random() * 15);
-        }
-        phase.counter--;
+        let phase = trendPhaseRef.current[stock.Symbol] || { bias: 0, duration: 0 };
 
-        // 2. MEAN REVERSION (Elasticity)
-        // If price deviates more than 5% from base, pull it back
+        // 1. CYCLE LOGIC: Change trend direction every few cycles
+        if (phase.duration <= 0) {
+          phase.bias = (Math.random() * 2 - 1) * 0.002; // Small random bias
+          phase.duration = 5 + Math.floor(Math.random() * 8);
+        }
+        phase.duration--;
+
+        // 2. MEAN REVERSION: Pull price back to center if it deviates too far
         const deviation = (stock.LTP - basePrice) / basePrice;
-        const pullStrength = 0.0005; 
-        const elasticity = deviation * pullStrength; // Negative if too high, positive if too low
+        const gravitationalPull = deviation * 0.001; 
 
-        // 3. MOMENTUM & NOISE
-        let currentMomentum = momentumRef.current[stock.Symbol] || 0;
-        
-        // Momentum tends towards the target but is fought by elasticity
-        currentMomentum = (currentMomentum * 0.8) + (phase.target * 0.2) - elasticity;
-        
-        // Add "Choppiness" (Noise)
-        const noise = (Math.random() * 2 - 1) * 0.0008;
-        currentMomentum += noise;
-        
-        momentumRef.current[stock.Symbol] = currentMomentum;
+        // 3. NOISE: High-frequency market jitter
+        const jitter = (Math.random() * 2 - 1) * 0.0008;
 
-        // 4. PRICE UPDATE
-        const delta = stock.LTP * currentMomentum;
-        let newLTP = Number(Math.max(0.1, stock.LTP + delta).toFixed(2));
-        
-        // Extra Hard Dampening if price goes way off (circuit breaker style)
-        if (Math.abs(deviation) > 0.20) {
-           newLTP = stock.LTP - (deviation * 2); // Forceful correction
-        }
+        // 4. CALCULATION
+        const movement = phase.bias - gravitationalPull + jitter;
+        const newLTP = Number(Math.max(0.1, stock.LTP * (1 + movement)).toFixed(2));
 
         const newStock = {
           ...stock,
           LTP: newLTP,
           Change: stock.Open !== 0 ? ((newLTP - stock.Open) / stock.Open) * 100 : 0,
-          High: Math.max(stock.High, newLTP),
-          Low: Math.min(stock.Low, newLTP),
-          Volume: stock.Volume + Math.floor(Math.random() * 5)
+          High: Math.max(stock.High, newLTP, newLTP + (Math.random() * stock.LTP * 0.001)), // Ensure High > LTP for wicks
+          Low: Math.min(stock.Low, newLTP, newLTP - (Math.random() * stock.LTP * 0.001)),  // Ensure Low < LTP for wicks
+          Volume: stock.Volume + Math.floor(Math.random() * 10)
         };
 
         trendPhaseRef.current[stock.Symbol] = phase;
 
-        // Broadcast to Firebase
-        if (Math.random() > 0.3) {
+        // Spread updates to avoid hitting Firestore limits if many stocks
+        if (Math.random() > 0.4) {
           batch.set(doc(db, 'market', stock.Symbol), {
             ltp: newStock.LTP,
             change: newStock.Change,
@@ -183,7 +165,7 @@ const App: React.FC = () => {
         await batch.commit();
         setStocks(updatedStocks);
       } catch (e) {
-        console.error("Simulation Sync Error:", e);
+        console.error("Simulation Sync Fail:", e);
       }
     }, SIMULATION_INTERVAL);
 
@@ -210,7 +192,6 @@ const App: React.FC = () => {
         batch.set(doc(db, 'market', symbol), { ltp: price, change: 0, high: price, low: price, volume: 1000, updatedAt: Date.now() });
       });
       await batch.commit();
-      alert("Reset Complete.");
     } finally {
       setIsSyncing(false);
     }

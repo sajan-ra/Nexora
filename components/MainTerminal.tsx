@@ -37,9 +37,8 @@ interface Candle {
 }
 
 /**
- * High-Fidelity Candlestick Component
- * Matches the "Anatomy of a Candlestick" reference:
- * Includes Upper/Lower Shadows with Pin Terminals and a robust Pillar body.
+ * Anatomically Correct Candlestick
+ * Guaranteed Upper and Lower sticks (shadows) with Terminal Pins.
  */
 const Candlestick = (props: any) => {
   const { x, y, width, height, payload } = props;
@@ -49,23 +48,25 @@ const Candlestick = (props: any) => {
   const isUp = close >= open;
   const color = isUp ? "#2ebd85" : "#f6465d";
   
-  // Recharts 'y' is the pixel for 'high'
-  // Recharts 'y + height' is the pixel for 'low'
+  // Recharts 'y' is the pixel position for the HIGH value in our [low, high] range.
+  // Recharts 'height' is the total pixel span from LOW to HIGH.
   const priceRange = high - low;
   const ratio = priceRange <= 0 ? 0 : height / priceRange;
 
   const bodyMax = Math.max(open, close);
   const bodyMin = Math.min(open, close);
   
+  // bodyTop and bodyBottom are pixels relative to 'y'
   const bodyTop = y + (high - bodyMax) * ratio;
   const bodyBottom = y + (high - bodyMin) * ratio;
-  const bodyHeight = Math.max(2, bodyBottom - bodyTop); // Ensure minimum body visibility
+  const bodyHeight = Math.max(1.5, bodyBottom - bodyTop);
 
   const centerX = x + width / 2;
 
   return (
     <g>
-      {/* 1. UPPER SHADOW (Stick) */}
+      {/* 1. UPPER SHADOW (The thin upper stick) */}
+      {/* Draws from the top body edge to the HIGH point (y) */}
       <line 
         x1={centerX} 
         y1={y} 
@@ -73,13 +74,13 @@ const Candlestick = (props: any) => {
         y2={bodyTop} 
         stroke={color} 
         strokeWidth={2}
-        strokeLinecap="round"
-        opacity={0.8}
+        strokeLinecap="butt"
       />
-      {/* High Pin Terminal (Small dot at the very top) */}
+      {/* Terminal HIGH Pin (The small dot at the very top) */}
       <circle cx={centerX} cy={y} r={1.5} fill={color} />
 
-      {/* 2. LOWER SHADOW (Stick) */}
+      {/* 2. LOWER SHADOW (The thin lower stick) */}
+      {/* Draws from the bottom body edge to the LOW point (y + height) */}
       <line 
         x1={centerX} 
         y1={bodyBottom} 
@@ -87,10 +88,9 @@ const Candlestick = (props: any) => {
         y2={y + height} 
         stroke={color} 
         strokeWidth={2}
-        strokeLinecap="round"
-        opacity={0.8}
+        strokeLinecap="butt"
       />
-      {/* Low Pin Terminal (Small dot at the very bottom) */}
+      {/* Terminal LOW Pin (The small dot at the very bottom) */}
       <circle cx={centerX} cy={y + height} r={1.5} fill={color} />
 
       {/* 3. THE PILLAR (Real Body) */}
@@ -100,29 +100,26 @@ const Candlestick = (props: any) => {
         width={width} 
         height={bodyHeight} 
         fill={color} 
-        fillOpacity={isForming ? 0.6 : 0.95}
+        fillOpacity={isForming ? 0.7 : 1}
         stroke={color} 
         strokeWidth={0.5}
-        rx={1.5}
-        className={isForming ? "transition-all duration-200" : ""}
+        rx={1}
+        className={isForming ? "transition-all duration-300" : ""}
       />
 
-      {/* 4. Forming Pulsar (Current Price Indicator) */}
+      {/* 4. Forming Glow (Dynamic horizontal marker at current price) */}
       {isForming && (
-        <g className="animate-pulse">
-           <line 
-             x1={x - 4} 
-             y1={isUp ? bodyTop : bodyBottom} 
-             x2={x + width + 4} 
-             y2={isUp ? bodyTop : bodyBottom} 
-             stroke={color} 
-             strokeWidth={1}
-             strokeDasharray="2 1"
-           />
-        </g>
+        <rect
+          x={x - 3}
+          y={(isUp ? bodyTop : bodyBottom) - 1}
+          width={width + 6}
+          height={2}
+          fill={color}
+          className="animate-pulse"
+        />
       )}
 
-      {/* 5. Pattern Detection Tag */}
+      {/* 5. Pattern Tag */}
       {payload.pattern && (
         <text 
           x={centerX} 
@@ -131,7 +128,7 @@ const Candlestick = (props: any) => {
           fill={color} 
           fontSize="7" 
           fontWeight="900" 
-          className="uppercase tracking-[0.2em] fill-current"
+          className="uppercase tracking-widest shadow-sm"
         >
           {payload.pattern}
         </text>
@@ -154,12 +151,12 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
       let lastClose = stock.LTP;
       const now = Date.now();
       
-      for (let i = 50; i > 0; i--) {
-        const o = lastClose; // Continuity: New open = Old close
+      for (let i = 40; i > 0; i--) {
+        const o = lastClose; // Market Continuity: New open = Previous close
         const move = (Math.random() * 2 - 1) * (o * 0.002);
         const c = o + move;
-        const h = Math.max(o, c) + Math.random() * (o * 0.001);
-        const l = Math.min(o, c) - Math.random() * (o * 0.001);
+        const h = Math.max(o, c) + (Math.random() * o * 0.001);
+        const l = Math.min(o, c) - (Math.random() * o * 0.001);
         
         seeded.push({
           time: now - (i * TIMEFRAME_MS),
@@ -196,32 +193,30 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
 
       const current = currentOHLCRef.current[symbol];
 
-      // Interval Closure Logic
+      // Closure Logic: Start next candle immediately
       if (now - current.startTime >= TIMEFRAME_MS) {
         const closedCandle: Candle = {
           time: current.startTime,
           open: current.o,
-          high: Math.max(current.h, currentPrice),
-          low: Math.min(current.l, currentPrice),
+          high: Math.max(current.h, currentPrice, current.o + 0.1),
+          low: Math.min(current.l, currentPrice, current.o - 0.1),
           close: currentPrice,
-          range: [Math.min(current.l, currentPrice), Math.max(current.h, currentPrice)]
+          range: [
+            Math.min(current.l, currentPrice, current.o - 0.1), 
+            Math.max(current.h, currentPrice, current.o + 0.1)
+          ]
         };
 
-        // Standard Technical Patterns
         const body = Math.abs(closedCandle.close - closedCandle.open);
         const range = closedCandle.high - closedCandle.low;
-        if (range > 0) {
-          if (body <= 0.1 * range) closedCandle.pattern = "Doji";
-          else if ((closedCandle.high - Math.max(closedCandle.open, closedCandle.close)) >= 2 * body) closedCandle.pattern = "Star";
-          else if ((Math.min(closedCandle.open, closedCandle.close) - closedCandle.low) >= 2 * body) closedCandle.pattern = "Hammer";
-        }
+        if (range > 0 && body <= 0.15 * range) closedCandle.pattern = "Doji";
 
-        // Reset with Continuity
+        // Reset for next candle starting at THIS close
         currentOHLCRef.current[symbol] = { o: currentPrice, h: currentPrice, l: currentPrice, startTime: now };
-        return { ...prev, [symbol]: [...history.filter(c => !c.isForming), closedCandle].slice(-60) };
+        return { ...prev, [symbol]: [...history.filter(c => !c.isForming), closedCandle].slice(-55) };
       }
 
-      // Live Pillar Update
+      // Update current live candle
       currentOHLCRef.current[symbol] = {
         ...current,
         h: Math.max(current.h, currentPrice),
@@ -231,10 +226,13 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
       const formingCandle: Candle = {
         time: current.startTime,
         open: current.o,
-        high: Math.max(current.h, currentPrice),
-        low: Math.min(current.l, currentPrice),
+        high: Math.max(current.h, currentPrice, current.o + 0.05),
+        low: Math.min(current.l, currentPrice, current.o - 0.05),
         close: currentPrice,
-        range: [Math.min(current.l, currentPrice), Math.max(current.h, currentPrice)],
+        range: [
+          Math.min(current.l, currentPrice, current.o - 0.05), 
+          Math.max(current.h, currentPrice, current.o + 0.05)
+        ],
         isForming: true
       };
 
@@ -266,7 +264,7 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
             <div className="flex items-center gap-3">
               <h2 className="text-xl font-black text-white leading-none tracking-tighter uppercase">{stock.Symbol}</h2>
               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[8px] font-black uppercase border border-[#2ebd85]/30 bg-[#2ebd85]/5 text-[#2ebd85]">
-                <Activity size={10} /> Continuous Data Feed
+                <Activity size={10} /> Market Feed Synced
               </div>
             </div>
             <div className="flex gap-4 text-[9px] text-slate-600 font-black mt-1 uppercase tracking-tighter">
@@ -290,12 +288,12 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
 
       <div className="flex-1 relative p-4 flex flex-col min-h-[400px]">
         {!isMarketOpen && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#080a0c]/80 backdrop-blur-[2px] pointer-events-none">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#080a0c]/85 backdrop-blur-[2px] pointer-events-none">
             <div className="bg-[#111418] border border-[#1c2127] px-8 py-4 rounded-3xl flex items-center gap-5 shadow-2xl">
               <Moon size={24} className="text-slate-500 animate-pulse" />
               <div className="flex flex-col">
-                 <span className="text-xs font-black uppercase tracking-[0.3em] text-slate-200">System Halted</span>
-                 <span className="text-[9px] font-bold text-slate-500 uppercase mt-1">Live Feed Paused</span>
+                 <span className="text-xs font-black uppercase tracking-[0.3em] text-slate-200">Session Paused</span>
+                 <span className="text-[9px] font-bold text-slate-500 uppercase mt-1">Live Feed Idle</span>
               </div>
             </div>
           </div>
