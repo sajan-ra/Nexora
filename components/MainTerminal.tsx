@@ -21,12 +21,12 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
   
   const [tickFlash, setTickFlash] = useState<'up' | 'down' | null>(null);
   
-  // CRITICAL: Persistent references to prevent "Changing History"
-  const historyInitialized = useRef<string | null>(null);
-  const lastPriceRef = useRef<number>(0);
+  // PERSISTENCE REFS: These values stay the same even when the component re-renders
+  const initializedSymbol = useRef<string | null>(null);
   const lastBarRef = useRef<CandlestickData | null>(null);
+  const lastPriceRef = useRef<number>(0);
 
-  // 1. Setup the Chart UI (Run once)
+  // 1. INITIALIZE CHART ENGINE (Runs ONCE on mount)
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -49,6 +49,7 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
       rightPriceScale: {
         borderColor: '#1c2127',
         autoScale: true,
+        scaleMargins: { top: 0.1, bottom: 0.2 }, // Gives room so candles aren't squashed
       },
     });
 
@@ -90,76 +91,78 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
     };
   }, []);
 
-  // 2. Initialize History (Runs only when Symbol Changes)
+  // 2. SEED HISTORY (Runs ONLY when the symbol changes)
   useEffect(() => {
     if (!stock || !seriesRef.current || !volumeRef.current) return;
     
-    // STOP: If we already initialized history for THIS symbol, don't do it again!
-    if (historyInitialized.current === stock.Symbol) return;
+    // IF we already have data for this symbol, STOP. Do not re-seed and change history.
+    if (initializedSymbol.current === stock.Symbol) return;
 
     const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
     const history: CandlestickData[] = [];
     const volHistory: any[] = [];
-    let seedPrice = stock.LTP - (Math.random() * 20); // Create a slight trend start
+    let priceCursor = stock.LTP;
 
-    // Generate 150 static historical bars
+    // Generate 150 STATIC historical candles
     for (let i = 150; i > 0; i--) {
       const time = (now - (i * CANDLE_INTERVAL_S)) as UTCTimestamp;
-      const o = seedPrice;
-      const drift = (Math.random() - 0.5) * (o * 0.003);
-      const c = o + drift;
-      const h = Math.max(o, c) + (Math.random() * (o * 0.001));
-      const l = Math.min(o, c) - (Math.random() * (o * 0.001));
+      const open = priceCursor;
+      // Add realistic volatility so candles have "bodies"
+      const volatility = (Math.random() - 0.5) * (priceCursor * 0.005);
+      const close = open + volatility;
+      const high = Math.max(open, close) + (Math.random() * (priceCursor * 0.001));
+      const low = Math.min(open, close) - (Math.random() * (priceCursor * 0.001));
       
-      history.push({ time, open: o, high: h, low: l, close: c });
+      history.push({ time, open, high, low, close });
       volHistory.push({ 
         time, 
         value: Math.random() * 5000, 
-        color: c >= o ? '#2ebd8522' : '#f6465d22' 
+        color: close >= open ? '#2ebd8522' : '#f6465d22' 
       });
-      seedPrice = c;
+      priceCursor = close;
     }
 
-    // Set full data once
+    // Load into the chart once
     seriesRef.current.setData(history);
     volumeRef.current.setData(volHistory);
     
-    // Save state
-    historyInitialized.current = stock.Symbol;
+    // Mark as initialized so this block never runs again for this stock
+    initializedSymbol.current = stock.Symbol;
     lastBarRef.current = history[history.length - 1];
     lastPriceRef.current = stock.LTP;
     
     chartRef.current?.timeScale().fitContent();
   }, [stock?.Symbol]);
 
-  // 3. Live Ticks (Runs on every price update - ONLY updates the last bar)
+  // 3. LIVE TICK UPDATE (Only modifies the LATEST candle)
   useEffect(() => {
     if (!stock || !seriesRef.current || !volumeRef.current || !lastBarRef.current) return;
-    if (historyInitialized.current !== stock.Symbol) return;
+    // Safety check: ensure we are updating the right symbol's chart
+    if (initializedSymbol.current !== stock.Symbol) return;
 
     const currentPrice = stock.LTP;
     const now = Math.floor(Date.now() / 1000);
     const currentIntervalBar = (Math.floor(now / CANDLE_INTERVAL_S) * CANDLE_INTERVAL_S) as UTCTimestamp;
 
-    // Tick visual flash
+    // Visual price flash
     if (currentPrice > lastPriceRef.current) setTickFlash('up');
     else if (currentPrice < lastPriceRef.current) setTickFlash('down');
     lastPriceRef.current = currentPrice;
     const flashTimer = setTimeout(() => setTickFlash(null), 300);
 
-    // Get reference to the previous bar to maintain continuity (Open = Prev Close)
-    const prevClose = lastBarRef.current.close;
+    // Get the open price (continuity)
+    let open = lastBarRef.current.time === currentIntervalBar ? lastBarRef.current.open : lastBarRef.current.close;
     
-    // If we are in the same time block as the last bar, keep updating it.
-    // If it's a new time block, lastBarRef will naturally be the "previous" one.
-    let open = currentIntervalBar === lastBarRef.current.time ? lastBarRef.current.open : prevClose;
-    let high = Math.max(currentPrice, open);
-    let low = Math.min(currentPrice, open);
+    // Simulate "Wick" height even if price is flat
+    // This ensures candles look "pro" and not like flat lines
+    const noise = currentPrice * 0.0005; 
+    let high = Math.max(currentPrice, open) + (Math.random() * noise);
+    let low = Math.min(currentPrice, open) - (Math.random() * noise);
 
-    // If we are continuing the same bar, factor in its existing High/Low
+    // If we're continuing the SAME bar, keep the highest/lowest we've seen so far
     if (currentIntervalBar === lastBarRef.current.time) {
-        high = Math.max(high, lastBarRef.current.high);
-        low = Math.min(low, lastBarRef.current.low);
+      high = Math.max(high, lastBarRef.current.high);
+      low = Math.min(low, lastBarRef.current.low);
     }
 
     const liveBar: CandlestickData = {
@@ -170,45 +173,51 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
       close: currentPrice,
     };
 
-    // Incremental update only! This does NOT reset the chart background or history.
+    // series.update() is INCREMENTAL. It does not touch historical data.
     seriesRef.current.update(liveBar);
     
     volumeRef.current.update({
       time: currentIntervalBar,
-      value: (currentIntervalBar === lastBarRef.current.time ? 100 : 50) + Math.random() * 50,
+      value: (currentIntervalBar === lastBarRef.current.time ? 100 : 50) + Math.random() * 80,
       color: currentPrice >= open ? '#2ebd8533' : '#f6465d33'
     });
 
+    // Save the bar state for the next tick
     lastBarRef.current = liveBar;
 
     return () => clearTimeout(flashTimer);
   }, [stock?.LTP]);
 
-  // UI Components (Market Depth etc)
+  // Order Book Simulation
   const depth = useMemo(() => {
     if (!stock) return { bids: [], asks: [] };
     const p = stock.LTP;
     const gen = (start: number, step: number) => Array.from({ length: 6 }).map((_, i) => ({
       price: start + (i * step),
-      vol: Math.floor(Math.random() * 1000) + 50
+      vol: Math.floor(Math.random() * 1500) + 100
     }));
-    return { asks: gen(p + 0.1, 0.12).reverse(), bids: gen(p - 0.1, -0.12) };
+    return { asks: gen(p + 0.15, 0.15).reverse(), bids: gen(p - 0.15, -0.15) };
   }, [stock?.LTP]);
 
-  if (!stock) return <div className="flex-1 bg-[#080a0c] flex items-center justify-center font-black text-slate-800 uppercase tracking-widest">Waiting for stream...</div>;
+  if (!stock) return (
+    <div className="flex-1 bg-[#080a0c] flex items-center justify-center font-black text-slate-800 uppercase tracking-[0.3em]">
+      Initializing Terminal Stream...
+    </div>
+  );
 
   return (
     <main className="flex-1 flex flex-col bg-[#080a0c] overflow-hidden select-none">
+      {/* Dynamic Header */}
       <div className="h-16 border-b border-[#1c2127] px-6 flex items-center justify-between bg-[#0b0e11] z-10">
         <div className="flex items-center gap-8">
           <div>
             <h2 className="text-xl font-black text-white tracking-tighter uppercase flex items-center gap-2">
               {stock.Symbol}
-              <span className="text-[10px] bg-[#2ebd85]/10 px-1.5 py-0.5 rounded text-[#2ebd85] font-black border border-[#2ebd85]/20">RT-FEED</span>
+              <span className="text-[10px] bg-[#2ebd85]/10 px-1.5 py-0.5 rounded text-[#2ebd85] font-black border border-[#2ebd85]/20">STABLE FEED</span>
             </h2>
             <div className="flex gap-3 text-[9px] font-black text-slate-600 uppercase mt-0.5 tracking-widest">
               <span>NPR</span>
-              <span className="text-[#2ebd85]">OPEN</span>
+              <span className="text-[#2ebd85]">● MARKET OPEN</span>
             </div>
           </div>
           <div className="h-10 w-px bg-[#1c2127]"></div>
@@ -217,27 +226,29 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
                 {stock.LTP.toFixed(2)}
              </div>
              <div className={`text-[10px] font-bold mt-1 ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
-               {stock.Change >= 0 ? '+' : ''}{stock.Change.toFixed(2)}%
+               {stock.Change >= 0 ? '▲' : '▼'} {Math.abs(stock.Change).toFixed(2)}%
              </div>
           </div>
         </div>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
+        {/* TradingView Chart Container */}
         <div className="flex-1 relative border-r border-[#1c2127]">
           <div ref={chartContainerRef} className="w-full h-full" />
         </div>
 
+        {/* Real-time Depth View */}
         <div className="w-64 bg-[#0b0e11] border-l border-[#1c2127] flex flex-col font-mono text-[10px]">
            <div className="p-4 border-b border-[#1c2127] flex justify-between items-center bg-[#080a0c]">
-             <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Live Order Book</span>
+             <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Depth L2</span>
            </div>
            
            <div className="flex-1 overflow-hidden p-2 flex flex-col">
               <div className="flex flex-col-reverse gap-0.5 mb-2">
                  {depth.asks.map((ask, i) => (
                    <div key={i} className="flex justify-between px-2 py-0.5 relative group">
-                      <div className="absolute inset-y-0 right-0 bg-[#f6465d]/5" style={{ width: `${(ask.vol / 1100) * 100}%` }}></div>
+                      <div className="absolute inset-y-0 right-0 bg-[#f6465d]/5" style={{ width: `${(ask.vol / 1600) * 100}%` }}></div>
                       <span className="text-[#f6465d] font-bold z-10">{ask.price.toFixed(2)}</span>
                       <span className="text-slate-600 z-10">{ask.vol}</span>
                    </div>
@@ -253,7 +264,7 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
               <div className="flex flex-col gap-0.5 mt-2">
                  {depth.bids.map((bid, i) => (
                    <div key={i} className="flex justify-between px-2 py-0.5 relative group">
-                      <div className="absolute inset-y-0 right-0 bg-[#2ebd85]/5" style={{ width: `${(bid.vol / 1100) * 100}%` }}></div>
+                      <div className="absolute inset-y-0 right-0 bg-[#2ebd85]/5" style={{ width: `${(bid.vol / 1600) * 100}%` }}></div>
                       <span className="text-[#2ebd85] font-bold z-10">{bid.price.toFixed(2)}</span>
                       <span className="text-slate-600 z-10">{bid.vol}</span>
                    </div>
@@ -265,7 +276,7 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
 
       <div className="h-8 border-t border-[#1c2127] px-6 bg-[#080a0c] flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-700">
          <div className="flex gap-6 items-center">
-            <span className="flex items-center gap-2"><Zap size={10} className="text-amber-500" /> ENGINE PRO V4</span>
+            <span className="flex items-center gap-2"><Zap size={10} className="text-amber-500" /> NEXORA_ENGINE_V5.4_STABLE</span>
          </div>
       </div>
     </main>
