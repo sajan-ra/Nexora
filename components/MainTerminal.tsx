@@ -2,8 +2,9 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createChart, IChartApi, ISeriesApi, CandlestickData, UTCTimestamp, ColorType } from 'lightweight-charts';
 import { Stock, Holding } from '../types';
-import { Activity, Zap, BrainCircuit, ChevronUp, ChevronDown, Sparkles, Target } from 'lucide-react';
+import { Activity, Zap, BrainCircuit, ChevronUp, ChevronDown, Sparkles, Target, GripVertical, AlertTriangle } from 'lucide-react';
 import { getTacticalSignal, TacticalSignal } from '../services/aiService';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const CANDLE_INTERVAL_S = 15; 
 
@@ -30,7 +31,6 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
   const lastPriceRef = useRef<number>(0);
   const historyRef = useRef<CandlestickData[]>([]);
 
-  // Chart Engine Setup
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -91,7 +91,6 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
     };
   }, []);
 
-  // History Seeding & Oracle Trigger
   useEffect(() => {
     if (!stock || !seriesRef.current || !volumeRef.current) return;
     if (initializedSymbol.current === stock.Symbol) return;
@@ -122,7 +121,6 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
     lastPriceRef.current = stock.LTP;
     chartRef.current?.timeScale().fitContent();
 
-    // Trigger AI Oracle
     setIsOracleThinking(true);
     getTacticalSignal(stock, history).then(signal => {
       setTacticalSignal(signal);
@@ -130,7 +128,6 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
     });
   }, [stock?.Symbol]);
 
-  // Live Tick Updates
   useEffect(() => {
     if (!stock || !seriesRef.current || !volumeRef.current || !lastBarRef.current) return;
     if (initializedSymbol.current !== stock.Symbol) return;
@@ -184,7 +181,6 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
 
   return (
     <main className="flex-1 flex flex-col bg-[#080a0c] overflow-hidden select-none relative">
-      {/* Header */}
       <div className="h-16 border-b border-[#1c2127] px-6 flex items-center justify-between bg-[#0b0e11] z-10">
         <div className="flex items-center gap-8">
           <div>
@@ -203,66 +199,119 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         <div className="flex-1 relative border-r border-[#1c2127]">
           <div ref={chartContainerRef} className="w-full h-full" />
           
-          {/* FLOATING AI ORACLE */}
-          <div className={`absolute top-6 left-6 z-20 transition-all duration-500 ${oracleOpen ? 'w-64' : 'w-12 h-12 overflow-hidden'}`}>
-            <div className="bg-[#111418]/90 backdrop-blur-xl border border-[#2ebd85]/30 rounded-2xl shadow-2xl shadow-[#2ebd85]/10 flex flex-col">
-              <div className="p-3 flex items-center justify-between border-b border-white/5">
+          {/* NEXORA ORACLE - DRAGGABLE COMPONENT */}
+          <motion.div 
+            drag
+            dragMomentum={false}
+            initial={{ x: 24, y: 24 }}
+            className="absolute z-30"
+            style={{ width: oracleOpen ? '280px' : '48px' }}
+          >
+            <div className={`glass-effect rounded-2xl border shadow-2xl overflow-hidden transition-all duration-500 ${
+              tacticalSignal?.signal === 'BUY' ? 'border-[#2ebd85]/40 shadow-[#2ebd85]/5' : 
+              tacticalSignal?.signal === 'SELL' ? 'border-[#f6465d]/40 shadow-[#f6465d]/5' : 
+              'border-white/10'
+            }`}>
+              {/* Header / Drag Handle */}
+              <div className="p-3 flex items-center justify-between bg-black/40 border-b border-white/5 drag-handle">
                 <div className="flex items-center gap-2">
-                  <div className={`p-1.5 rounded-lg ${isOracleThinking ? 'bg-[#2ebd85] animate-pulse' : 'bg-[#2ebd85]/20'}`}>
-                    <BrainCircuit size={16} className="text-white" />
+                  <GripVertical size={14} className="text-slate-600" />
+                  <div className={`p-1 rounded ${isOracleThinking ? 'bg-[#2ebd85] animate-pulse' : 'bg-[#2ebd85]/20'}`}>
+                    <BrainCircuit size={14} className="text-white" />
                   </div>
-                  {oracleOpen && <span className="text-[10px] font-black text-white uppercase tracking-widest">Nexora Oracle</span>}
+                  {oracleOpen && <span className="text-[10px] font-black text-white uppercase tracking-widest">Oracle AI</span>}
                 </div>
-                <button onClick={() => setOracleOpen(!oracleOpen)} className="p-1 hover:bg-white/5 rounded-md text-slate-500 hover:text-white transition">
+                <button 
+                  onPointerDown={(e) => e.stopPropagation()} 
+                  onClick={() => setOracleOpen(!oracleOpen)}
+                  className="p-1 hover:bg-white/10 rounded transition text-slate-400"
+                >
                   {oracleOpen ? <ChevronDown size={14} /> : <Sparkles size={14} className="text-[#2ebd85]" />}
                 </button>
               </div>
 
-              {oracleOpen && (
-                <div className="p-4 space-y-4">
-                  {isOracleThinking ? (
-                    <div className="space-y-2 py-4">
-                      <div className="h-2 bg-white/5 rounded-full animate-pulse w-full"></div>
-                      <div className="h-2 bg-white/5 rounded-full animate-pulse w-2/3"></div>
-                    </div>
-                  ) : tacticalSignal ? (
-                    <>
-                      <div>
-                        <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Detected Pattern</div>
-                        <div className="text-xs font-bold text-[#2ebd85] flex items-center gap-1.5">
-                          <Activity size={12} /> {tacticalSignal.pattern}
-                        </div>
+              {/* Oracle Body */}
+              <AnimatePresence>
+                {oracleOpen && (
+                  <motion.div 
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="p-4 space-y-4"
+                  >
+                    {isOracleThinking ? (
+                      <div className="space-y-3 py-2">
+                        <div className="h-2 bg-white/5 rounded-full animate-pulse w-full"></div>
+                        <div className="h-2 bg-white/5 rounded-full animate-pulse w-3/4"></div>
+                        <div className="h-2 bg-white/5 rounded-full animate-pulse w-5/6"></div>
                       </div>
-                      <div className="flex items-center justify-between bg-white/5 p-2.5 rounded-xl border border-white/5">
-                        <div>
-                          <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Signal</div>
-                          <div className={`text-lg font-black ${tacticalSignal.signal === 'BUY' ? 'text-[#2ebd85]' : tacticalSignal.signal === 'SELL' ? 'text-[#f6465d]' : 'text-slate-400'}`}>
-                            {tacticalSignal.signal}
+                    ) : (
+                      <>
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Live Pattern</div>
+                            <div className={`text-xs font-bold flex items-center gap-1.5 ${
+                              tacticalSignal?.signal === 'BUY' ? 'text-[#2ebd85]' : 
+                              tacticalSignal?.signal === 'SELL' ? 'text-[#f6465d]' : 'text-slate-300'
+                            }`}>
+                              <Activity size={12} /> {tacticalSignal?.pattern || 'Calculating...'}
+                            </div>
+                          </div>
+                          <div className="bg-white/5 px-2 py-1 rounded border border-white/5 text-center">
+                            <div className="text-[8px] font-black text-slate-600 uppercase tracking-widest">Conf</div>
+                            <div className="text-[10px] font-black text-white">{tacticalSignal?.confidence || 0}%</div>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Confidence</div>
-                          <div className="text-lg font-black text-white">{tacticalSignal.confidence}%</div>
+
+                        <div className={`p-3 rounded-xl border flex items-center justify-between ${
+                          tacticalSignal?.signal === 'BUY' ? 'bg-[#2ebd85]/10 border-[#2ebd85]/20' : 
+                          tacticalSignal?.signal === 'SELL' ? 'bg-[#f6465d]/10 border-[#f6465d]/20' : 
+                          'bg-white/5 border-white/10'
+                        }`}>
+                          <div>
+                            <div className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Verdict</div>
+                            <div className={`text-lg font-black tracking-tighter ${
+                              tacticalSignal?.signal === 'BUY' ? 'text-[#2ebd85]' : 
+                              tacticalSignal?.signal === 'SELL' ? 'text-[#f6465d]' : 'text-slate-400'
+                            }`}>
+                              {tacticalSignal?.signal || 'NEUTRAL'}
+                            </div>
+                          </div>
+                          <Target size={20} className={
+                            tacticalSignal?.signal === 'BUY' ? 'text-[#2ebd85]/40' : 
+                            tacticalSignal?.signal === 'SELL' ? 'text-[#f6465d]/40' : 'text-slate-700'
+                          } />
                         </div>
-                      </div>
-                      <div className="text-[10px] text-slate-400 leading-relaxed italic border-l-2 border-[#2ebd85]/40 pl-3">
-                        "{tacticalSignal.advice}"
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-[10px] text-slate-600 font-bold uppercase tracking-widest text-center py-4">Waiting for Pulse...</div>
-                  )}
-                </div>
-              )}
+
+                        <div className="bg-black/20 p-2.5 rounded-lg border border-white/5">
+                          <div className="text-[9px] font-black text-amber-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
+                            <Zap size={10} /> Strategic Reason
+                          </div>
+                          <p className="text-[10px] text-slate-300 leading-relaxed italic font-medium">
+                            "{tacticalSignal?.reason || 'Scanning order flow and historical liquidity levels...'}"
+                          </p>
+                        </div>
+
+                        <div className="pt-2 border-t border-white/5">
+                          <div className="text-[9px] font-black text-[#2ebd85] uppercase tracking-widest mb-1">Advice</div>
+                          <p className="text-[10px] text-slate-500 leading-tight">
+                            {tacticalSignal?.advice || 'Monitoring market momentum.'}
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-          </div>
+          </motion.div>
         </div>
 
-        {/* Depth View */}
+        {/* Orderbook Depth View */}
         <div className="w-64 bg-[#0b0e11] border-l border-[#1c2127] flex flex-col font-mono text-[10px]">
            <div className="p-4 border-b border-[#1c2127] flex justify-between items-center bg-[#080a0c]">
              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Live Orderbook</span>
