@@ -9,6 +9,7 @@ import DashboardStats from './components/DashboardStats';
 import AIInsights from './components/AIInsights';
 import Auth from './components/Auth';
 import { auth, db, rtdb } from './services/firebase';
+import { fetchLiveLtp } from './services/api';
 import { onAuthStateChanged, signOut, User, updateProfile } from 'firebase/auth';
 import { doc, onSnapshot, updateDoc, increment } from 'firebase/firestore';
 import { ref, onValue, update as rtdbUpdate } from 'firebase/database';
@@ -26,7 +27,7 @@ const SYMBOLS = {
 
 const ALL_FLAT_SYMBOLS = Array.from(new Set(Object.values(SYMBOLS).flat()));
 const INITIAL_BALANCE = 50000;
-const SIMULATION_INTERVAL = 4000; 
+const SIMULATION_INTERVAL = 2000; // Updated to 2 seconds as requested
 const RTDB_SYNC_INTERVAL = 15000; 
 
 const BASE_PRICES: Record<string, number> = {
@@ -67,6 +68,48 @@ const App: React.FC = () => {
     return isWeekday && hour >= 8 && hour < 15;
   }, []);
 
+  const syncMarketData = useCallback(async () => {
+    if (!user || isApiSyncing) return;
+    
+    setIsApiSyncing(true);
+    const BATCH_SIZE = 10;
+    const total = ALL_FLAT_SYMBOLS.length;
+    
+    try {
+      for (let i = 0; i < total; i += BATCH_SIZE) {
+        const batch = ALL_FLAT_SYMBOLS.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map(async (sym) => {
+            const ltp = await fetchLiveLtp(sym);
+            return { sym, ltp };
+          })
+        );
+
+        setStocks(current => current.map(s => {
+          const match = results.find(r => r.sym === s.Symbol);
+          if (match && match.ltp !== null) {
+            return {
+              ...s,
+              LTP: match.ltp,
+              Change: s.Open !== 0 ? ((match.ltp - s.Open) / s.Open) * 100 : s.Change,
+              High: Math.max(s.High, match.ltp),
+              Low: Math.min(s.Low, match.ltp)
+            };
+          }
+          return s;
+        }));
+
+        if (i + BATCH_SIZE < total) {
+          await new Promise(r => setTimeout(r, 600));
+        }
+      }
+    } catch (err) {
+      console.error("Market sync cycle encountered an error:", err);
+    } finally {
+      setIsApiSyncing(false);
+    }
+  }, [user, isApiSyncing]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -103,14 +146,16 @@ const App: React.FC = () => {
     });
   }, [user]);
 
-  // Vercel CRON Data Listener: Connects UI directly to the synced data in RTDB
+  useEffect(() => {
+    if (user) {
+      syncMarketData();
+    }
+  }, [user, isMarketOpen]);
+
   useEffect(() => {
     if (!user) return;
-    setIsApiSyncing(true);
     
-    // Listen to market/snapshot/stocks which is where the Vercel function writes
     return onValue(ref(rtdb, 'market/snapshot/stocks'), (snapshot) => {
-      setIsApiSyncing(false);
       if (!snapshot.exists()) return;
       
       const syncedData = snapshot.val();
@@ -118,12 +163,10 @@ const App: React.FC = () => {
         const remote = syncedData[s.Symbol];
         if (!remote) return s;
         
-        // Use remote data as the new source of truth
         const newLtp = remote.ltp;
         return { 
           ...s, 
           LTP: newLtp, 
-          // Re-calculate change based on current Open if available, or just use LTP drift
           Change: s.Open !== 0 ? ((newLtp - s.Open) / s.Open) * 100 : s.Change,
           High: Math.max(s.High, newLtp),
           Low: Math.min(s.Low, newLtp)
@@ -132,7 +175,6 @@ const App: React.FC = () => {
     });
   }, [user]);
 
-  // Admin Drift Logic for Real-Time Feel during open hours
   useEffect(() => {
     if (!isAdmin || !isMarketOpen || !user) return;
 
