@@ -13,64 +13,97 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const rtdb = getDatabase(app);
 const BASE_URL = "https://nepsetty.kokomo.workers.dev/api/stock";
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 10; // Reduced batch size for stability
 
-async function fetchStockWithRetry(symbol: string, attempts = 2): Promise<{symbol: string, ltp: number}> {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const res = await fetch(`${BASE_URL}?symbol=${symbol}`, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const price = Number(data?.ltp);
-      if (!isNaN(price) && price > 0) return { symbol, ltp: price };
-    } catch (err) {
-      console.warn(`Attempt ${i+1} failed for ${symbol}:`, err);
-      if (i < attempts - 1) await new Promise(r => setTimeout(r, 300));
+/**
+ * Robust fetch for a single stock with individual error handling
+ */
+async function fetchStock(symbol: string): Promise<{symbol: string, ltp: number | null}> {
+  try {
+    // Adding a timeout to the individual fetch to prevent hanging the whole function
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    
+    const res = await fetch(`${BASE_URL}?symbol=${symbol}`, { 
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' }
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) throw new Error(`Status ${res.status}`);
+    
+    const data = await res.json();
+    const price = Number(data?.ltp);
+    
+    if (isNaN(price) || price <= 0) {
+      console.warn(`[SYNC] Invalid price for ${symbol}:`, data?.ltp);
+      return { symbol, ltp: null };
     }
+    
+    return { symbol, ltp: price };
+  } catch (err) {
+    console.error(`[SYNC ERROR] ${symbol}:`, err instanceof Error ? err.message : err);
+    return { symbol, ltp: null };
   }
-  return { symbol, ltp: 0 };
 }
 
+/**
+ * Main Handler for Vercel Cron
+ */
 export default async function handler(req: any, res: any) {
-  console.log(`[${new Date().toISOString()}] Starting NEPSE Daily Sync...`);
   const startTime = Date.now();
+  console.log(`[${new Date().toISOString()}] Starting Batch Sync...`);
   
   try {
-    const finalResults: Record<string, any> = {};
-    
-    // Batch processing to prevent Vercel execution timeouts and network congestion
+    const finalSnapshot: Record<string, any> = {};
+    let successCount = 0;
+
+    // Process symbols in sequential batches of BATCH_SIZE
     for (let i = 0; i < SYMBOLS.length; i += BATCH_SIZE) {
       const batch = SYMBOLS.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.all(batch.map(s => fetchStockWithRetry(s)));
+      const batchResults = await Promise.all(batch.map(s => fetchStock(s)));
       
       batchResults.forEach(r => {
-        if (r.ltp > 0) {
-          finalResults[r.symbol] = { 
+        if (r.ltp !== null) {
+          finalSnapshot[r.symbol] = { 
             ltp: r.ltp, 
             updatedAt: Date.now(),
             source: 'Vercel_Cron'
           };
+          successCount++;
         }
       });
+
+      // Small throttle to avoid hitting worker rate limits or Vercel network limits
+      if (i + BATCH_SIZE < SYMBOLS.length) {
+        await new Promise(r => setTimeout(r, 300));
+      }
       
-      // Throttle slightly to respect target worker limits
-      await new Promise(r => setTimeout(r, 200));
-      console.log(`Synced batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(SYMBOLS.length/BATCH_SIZE)}`);
+      console.log(`[SYNC] Completed batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(SYMBOLS.length/BATCH_SIZE)}`);
     }
 
-    // Single write to RTDB for the entire snapshot
-    await update(ref(rtdb, 'market/snapshot/stocks'), finalResults);
+    // Single atomic update to Firebase Realtime Database
+    if (successCount > 0) {
+      await update(ref(rtdb, 'market/snapshot/stocks'), finalSnapshot);
+    }
 
     const duration = (Date.now() - startTime) / 1000;
-    console.log(`Sync Complete in ${duration}s. Success count: ${Object.keys(finalResults).length}`);
+    console.log(`[SYNC DONE] ${successCount}/${SYMBOLS.length} symbols updated in ${duration}s`);
 
     return res.status(200).json({ 
       success: true, 
-      count: Object.keys(finalResults).length, 
+      count: successCount, 
+      total: SYMBOLS.length,
       durationSeconds: duration 
     });
   } catch (err: any) {
-    console.error("Critical Sync Failure:", err);
-    return res.status(500).json({ success: false, error: err.message });
+    console.error("[CRITICAL] Sync Function Crashed:", err);
+    // Returning 500 with a clean JSON body for Vercel logs
+    return res.status(500).json({ 
+      success: false, 
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 }
