@@ -14,7 +14,6 @@ export interface TacticalSignal {
   signal: 'BUY' | 'SELL' | 'NEUTRAL';
   confidence: number;
   pattern: string;
-  reason: string;
   advice: string;
 }
 
@@ -23,18 +22,11 @@ export async function getTacticalSignal(stock: Stock, history: any[]): Promise<T
 Symbol: ${stock.Symbol}
 Current Price: ${stock.LTP}
 Change: ${stock.Change}%
-Recent OHLC History (last 10 bars): ${JSON.stringify(history.slice(-10))}
+Recent OHLC History (last 5 bars): ${JSON.stringify(history.slice(-5))}
 
-Identify the dominant candlestick pattern and provide a clear reason for your signal.
+Identify the dominant candlestick pattern and suggest a tactical action. 
 Return ONLY a JSON object: 
-{
-  "symbol": "${stock.Symbol}", 
-  "signal": "BUY|SELL|NEUTRAL", 
-  "confidence": 0-100, 
-  "pattern": "string", 
-  "reason": "Specific technical reason (e.g., Bearish Engulfing with volume surge, RSI overbought, Hammer rejection at support)",
-  "advice": "short actionable sentence"
-}`;
+{"symbol": "${stock.Symbol}", "signal": "BUY|SELL|NEUTRAL", "confidence": 0-100, "pattern": "string", "advice": "short sentence"}`;
 
   try {
     const response = await ai.models.generateContent({
@@ -53,8 +45,7 @@ Return ONLY a JSON object:
       signal: 'NEUTRAL', 
       confidence: 0, 
       pattern: 'Analyzing...', 
-      reason: 'Neural link unstable.',
-      advice: 'Wait for signal clarity.' 
+      advice: 'Neural link unstable.' 
     };
   }
 }
