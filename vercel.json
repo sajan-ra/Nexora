@@ -1,5 +1,11 @@
 
 {
+  "crons": [
+    {
+      "path": "/api/sync-nepse",
+      "schedule": "15 21 * * *" 
+    }
+  ],
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ],
