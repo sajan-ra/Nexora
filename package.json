@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.34.0",
+    "openai": "^4.85.4",
     "react-dom": "^19.2.3",
     "lucide-react": "^0.562.0",
     "recharts": "^3.6.0",

@@ -10,10 +10,10 @@ import AIInsights from './components/AIInsights';
 import Auth from './components/Auth';
 import { auth, db } from './services/firebase';
 import { onAuthStateChanged, signOut, User, updateProfile } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, updateDoc, increment, collection, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, updateDoc, increment, collection, writeBatch } from 'firebase/firestore';
 import { TrendingUp, LayoutDashboard, Briefcase, Cpu, Loader2, LogOut, Power, ShieldCheck, RefreshCw } from 'lucide-react';
 
-const ADMIN_UID = "mgDRF6WPYLR8G2AkbSlT6ndsbyI3";
+const ADMIN_UID = "wL3xCPtylQc5pxcuaFOWNdW62UW2";
 
 const SYMBOLS = {
   "Banks": ["NABIL","NMB","NICA","GBIME","EBL","HBL","NIBL","PCBL","SBL","SCB","ADBL","CZBIL","MBL","KBL","LBL","SANIMA","PRVU","BOKL","MEGA","SRBL"],
@@ -25,10 +25,11 @@ const SYMBOLS = {
 
 const ALL_FLAT_SYMBOLS = Array.from(new Set(Object.values(SYMBOLS).flat()));
 const INITIAL_BALANCE = 50000;
-const SIMULATION_INTERVAL = 3000; 
+const SIMULATION_INTERVAL = 4000; 
+const DB_SYNC_THRESHOLD = 15000; 
 
 const BASE_PRICES: Record<string, number> = {
-  "NABIL": 498.6, "NMB": 235.1, "NICA": 321, "GBIME": 228, "EBL": 647.29, "HBL": 187.9, "NIBL": 0, "PCBL": 257, "SBL": 374.9, "SCB": 624.79, "ADBL": 288, "CZBIL": 191.5, "MBL": 220, "KBL": 178.4, "LBL": 173, "SANIMA": 319, "PRVU": 182, "BOKL": 207.3, "MEGA": 219, "SRBL": 173.1, "MNBBL": 342.6, "JBBL": 318, "GBBL": 374, "SHINE": 391, "SADBL": 381, "CORBL": 1450, "SAPDBL": 793.1, "MLBL": 354.5, "KSBBL": 429.5, "GUFL": 486, "PFL": 358, "MFIL": 709, "CFCL": 462.1, "ICFC": 620, "BFCL": 165, "SFCL": 375, "NLIC": 750.5, "LICN": 876, "ALICL": 457, "PLIC": 340, "SLICL": 387, "SNLI": 504, "ILI": 442, "ULI": 393.8, "NICL": 504.9, "SICL": 635, "NIL": 602.5, "PRIN": 657, "IGI": 414, "SALICO": 600.3, "SGIC": 472, "SPIL": 740, "HEI": 500, "RBCL": 14940, "CHCL": 498, "BPCL": 714, "NHPC": 190.8, "SHPC": 515, "RADHI": 730, "SAHAS": 543, "UPCL": 359, "UNHPL": 481.5, "AKPL": 244, "API": 289, "NGPL": 387.5, "NYADI": 370, "DHPL": 288, "RHPL": 268.8, "HPPL": 472, "CIT": 1809.5, "HIDCL": 254.5, "NIFRA": 261.2, "NRN": 1345.2, "HATHY": 886.9, "ENL": 890, "UNL": 47200, "HDL": 1132.2, "SHIVM": 575, "BNT": 11952, "BNL": 15904.9, "SARBTM": 865, "GCIL": 405.3, "SONA": 414.8, "NLO": 254.1, "OMPL": 1239, "STC": 5405, "BBC": 4864, "NTC": 895.4, "OHL": 691.1, "TRH": 708, "YHL": 600, "AHPC": 272.3
+  "NABIL": 498.6, "NMB": 235.1, "NICA": 321, "GBIME": 228, "EBL": 647.29, "HBL": 187.9, "NIBL": 150, "PCBL": 257, "SBL": 374.9, "SCB": 624.79, "ADBL": 288, "CZBIL": 191.5, "MBL": 220, "KBL": 178.4, "LBL": 173, "SANIMA": 319, "PRVU": 182, "BOKL": 207.3, "MEGA": 219, "SRBL": 173.1, "MNBBL": 342.6, "JBBL": 318, "GBBL": 374, "SHINE": 391, "SADBL": 381, "CORBL": 1450, "SAPDBL": 793.1, "MLBL": 354.5, "KSBBL": 429.5, "GUFL": 486, "PFL": 358, "MFIL": 709, "CFCL": 462.1, "ICFC": 620, "BFCL": 165, "SFCL": 375, "NLIC": 750.5, "LICN": 876, "ALICL": 457, "PLIC": 340, "SLICL": 387, "SNLI": 504, "ILI": 442, "ULI": 393.8, "NICL": 504.9, "SICL": 635, "NIL": 602.5, "PRIN": 657, "IGI": 414, "SALICO": 600.3, "SGIC": 472, "SPIL": 740, "HEI": 500, "RBCL": 14940, "CHCL": 498, "BPCL": 714, "NHPC": 190.8, "SHPC": 515, "RADHI": 730, "SAHAS": 543, "UPCL": 359, "UNHPL": 481.5, "AKPL": 244, "API": 289, "NGPL": 387.5, "NYADI": 370, "DHPL": 288, "RHPL": 268.8, "HPPL": 472, "CIT": 1809.5, "HIDCL": 254.5, "NIFRA": 261.2, "NRN": 1345.2, "HATHY": 886.9, "ENL": 890, "UNL": 47200, "HDL": 1132.2, "SHIVM": 575, "BNT": 11952, "BNL": 15904.9, "SARBTM": 865, "GCIL": 405.3, "SONA": 414.8, "NLO": 254.1, "OMPL": 1239, "STC": 5405, "BBC": 4864, "NTC": 895.4, "OHL": 691.1, "TRH": 708, "YHL": 600, "AHPC": 272.3
 };
 
 interface ExtendedStock extends Stock {
@@ -52,9 +53,8 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [portfolio, setPortfolio] = useState<Portfolio>({ balance: INITIAL_BALANCE, holdings: [], history: [] });
 
-  // Simulation State: Momentum and Trend Persistence
   const trendPhaseRef = useRef<Record<string, { bias: number, duration: number }>>({});
-
+  const lastCloudSyncRef = useRef<number>(0);
   const isAdmin = useMemo(() => user?.uid === ADMIN_UID, [user]);
 
   useEffect(() => {
@@ -86,12 +86,13 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!user) return;
-    const unsub = onSnapshot(collection(db, 'market'), (snap) => {
-      const updates: Record<string, any> = {};
-      snap.forEach(doc => { updates[doc.id] = doc.data(); });
-
+    const unsub = onSnapshot(doc(db, 'market', 'snapshot'), (snap) => {
+      if (!snap.exists()) return;
+      if (isAdmin && isMarketOpen) return;
+      
+      const data = snap.data().stocks || {};
       setStocks(current => current.map(s => {
-        const up = updates[s.Symbol];
+        const up = data[s.Symbol];
         if (!up) return s;
         return {
           ...s,
@@ -104,68 +105,64 @@ const App: React.FC = () => {
       }));
     });
     return () => unsub();
-  }, [user]);
+  }, [user, isAdmin, isMarketOpen]);
 
-  // HIGH-OSCILLATION ENGINE
   useEffect(() => {
     if (!isAdmin || !isMarketOpen || !user) return;
 
     const simInterval = setInterval(async () => {
-      const batch = writeBatch(db);
-      
+      const now = Date.now();
+
       const updatedStocks = stocks.map(stock => {
         const basePrice = BASE_PRICES[stock.Symbol] || 100.0;
         let phase = trendPhaseRef.current[stock.Symbol] || { bias: 0, duration: 0 };
 
-        // 1. CYCLE LOGIC: Change trend direction every few cycles
         if (phase.duration <= 0) {
-          phase.bias = (Math.random() * 2 - 1) * 0.002; // Small random bias
-          phase.duration = 5 + Math.floor(Math.random() * 8);
+          phase.bias = (Math.random() * 2 - 1) * 0.0015;
+          phase.duration = 4 + Math.floor(Math.random() * 8);
         }
         phase.duration--;
 
-        // 2. MEAN REVERSION: Pull price back to center if it deviates too far
-        const deviation = (stock.LTP - basePrice) / basePrice;
-        const gravitationalPull = deviation * 0.001; 
+        const deviationRatio = (stock.LTP - basePrice) / basePrice;
+        const elasticPull = deviationRatio * 0.0018;
+        const noise = (Math.random() * 2 - 1) * 0.0007;
 
-        // 3. NOISE: High-frequency market jitter
-        const jitter = (Math.random() * 2 - 1) * 0.0008;
-
-        // 4. CALCULATION
-        const movement = phase.bias - gravitationalPull + jitter;
+        const movement = phase.bias - elasticPull + noise;
         const newLTP = Number(Math.max(0.1, stock.LTP * (1 + movement)).toFixed(2));
 
-        const newStock = {
-          ...stock,
-          LTP: newLTP,
-          Change: stock.Open !== 0 ? ((newLTP - stock.Open) / stock.Open) * 100 : 0,
-          High: Math.max(stock.High, newLTP, newLTP + (Math.random() * stock.LTP * 0.001)), // Ensure High > LTP for wicks
-          Low: Math.min(stock.Low, newLTP, newLTP - (Math.random() * stock.LTP * 0.001)),  // Ensure Low < LTP for wicks
-          Volume: stock.Volume + Math.floor(Math.random() * 10)
-        };
+        const volatilityFactor = stock.LTP * 0.0005;
+        const targetHigh = Math.max(stock.High, newLTP, newLTP + (Math.random() * volatilityFactor));
+        const targetLow = Math.min(stock.Low, newLTP, newLTP - (Math.random() * volatilityFactor));
 
         trendPhaseRef.current[stock.Symbol] = phase;
 
-        // Spread updates to avoid hitting Firestore limits if many stocks
-        if (Math.random() > 0.4) {
-          batch.set(doc(db, 'market', stock.Symbol), {
-            ltp: newStock.LTP,
-            change: newStock.Change,
-            high: newStock.High,
-            low: newStock.Low,
-            volume: newStock.Volume,
-            updatedAt: Date.now()
-          }, { merge: true });
-        }
-
-        return newStock;
+        return {
+          ...stock,
+          LTP: newLTP,
+          Change: stock.Open !== 0 ? ((newLTP - stock.Open) / stock.Open) * 100 : 0,
+          High: targetHigh,
+          Low: targetLow,
+          Volume: stock.Volume + Math.floor(Math.random() * 15)
+        };
       });
 
-      try {
-        await batch.commit();
-        setStocks(updatedStocks);
-      } catch (e) {
-        console.error("Simulation Sync Fail:", e);
+      setStocks(updatedStocks);
+
+      if (now - lastCloudSyncRef.current >= DB_SYNC_THRESHOLD) {
+        const snapshot: Record<string, any> = {};
+        updatedStocks.forEach(s => {
+          snapshot[s.Symbol] = { ltp: s.LTP, change: s.Change, high: s.High, low: s.Low, volume: s.Volume };
+        });
+
+        try {
+          await setDoc(doc(db, 'market', 'snapshot'), { 
+            stocks: snapshot,
+            updatedAt: now 
+          }, { merge: true });
+          lastCloudSyncRef.current = now;
+        } catch (e) {
+          console.error("Cloud Sync Threshold Breached:", e);
+        }
       }
     }, SIMULATION_INTERVAL);
 
@@ -183,15 +180,16 @@ const App: React.FC = () => {
   };
 
   const resetMarket = async () => {
-    if (!isAdmin || !window.confirm("RESET ALL MARKET DATA?")) return;
+    if (!isAdmin || !window.confirm("RESET CLOUD CACHE?")) return;
     setIsSyncing(true);
     try {
-      const batch = writeBatch(db);
+      const snapshot: Record<string, any> = {};
       ALL_FLAT_SYMBOLS.forEach(symbol => {
         const price = BASE_PRICES[symbol] || 100.0;
-        batch.set(doc(db, 'market', symbol), { ltp: price, change: 0, high: price, low: price, volume: 1000, updatedAt: Date.now() });
+        snapshot[symbol] = { ltp: price, change: 0, high: price, low: price, volume: 1000 };
       });
-      await batch.commit();
+      await setDoc(doc(db, 'market', 'snapshot'), { stocks: snapshot, updatedAt: Date.now() });
+      lastCloudSyncRef.current = 0;
     } finally {
       setIsSyncing(false);
     }
