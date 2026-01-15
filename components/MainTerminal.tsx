@@ -2,9 +2,9 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createChart, IChartApi, ISeriesApi, CandlestickData, UTCTimestamp, ColorType } from 'lightweight-charts';
 import { Stock, Holding } from '../types';
-import { Moon, Activity, Zap, TrendingUp, TrendingDown } from 'lucide-react';
+import { Moon, Activity, Zap } from 'lucide-react';
 
-const CANDLE_INTERVAL_S = 15; // 15s candles
+const CANDLE_INTERVAL_S = 15; 
 
 interface MainTerminalProps {
   stock?: Stock;
@@ -20,9 +20,13 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   
   const [tickFlash, setTickFlash] = useState<'up' | 'down' | null>(null);
-  const prevPrice = useRef<number>(0);
+  
+  // Persistence refs to keep track of state without triggering re-renders that reset the chart
+  const lastSymbolRef = useRef<string | null>(null);
+  const lastPriceRef = useRef<number>(0);
+  const lastCandleRef = useRef<CandlestickData | null>(null);
 
-  // Initialize TradingView Chart
+  // 1. Initialize Chart (Once)
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -30,12 +34,12 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
       layout: {
         background: { type: ColorType.Solid, color: '#080a0c' },
         textColor: '#475569',
-        fontSize: 10,
+        fontSize: 11,
         fontFamily: 'Inter, sans-serif',
       },
       grid: {
-        vertLines: { color: '#1c2127', style: 2 },
-        horzLines: { color: '#1c2127', style: 2 },
+        vertLines: { color: '#16191d', style: 1 },
+        horzLines: { color: '#16191d', style: 1 },
       },
       crosshair: {
         mode: 0,
@@ -45,11 +49,13 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
       timeScale: {
         borderColor: '#1c2127',
         timeVisible: true,
-        secondsVisible: true,
+        secondsVisible: false,
+        barSpacing: 10,
       },
       rightPriceScale: {
         borderColor: '#1c2127',
-        scaleMargins: { top: 0.1, bottom: 0.2 },
+        autoScale: true,
+        alignLabels: true,
       },
     });
 
@@ -64,7 +70,7 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
     const volume = chart.addHistogramSeries({
       color: '#2ebd8522',
       priceFormat: { type: 'volume' },
-      priceScaleId: '', // Overlay on price
+      priceScaleId: '', 
     });
     
     volume.priceScale().applyOptions({
@@ -76,8 +82,8 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
     volumeRef.current = volume;
 
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ 
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ 
           width: chartContainerRef.current.clientWidth,
           height: chartContainerRef.current.clientHeight 
         });
@@ -91,97 +97,121 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
     };
   }, []);
 
-  // Seed and Update Data
+  // 2. Handle Symbol Switch & Initial Seeding
   useEffect(() => {
     if (!stock || !seriesRef.current || !volumeRef.current) return;
 
-    const symbol = stock.Symbol;
-    const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
-    
-    // Check if price changed for flash effect
-    if (stock.LTP > prevPrice.current) setTickFlash('up');
-    else if (stock.LTP < prevPrice.current) setTickFlash('down');
-    prevPrice.current = stock.LTP;
+    // Only "Reset/Seed" if the symbol actually changes
+    if (lastSymbolRef.current !== stock.Symbol) {
+      const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
+      const history: CandlestickData[] = [];
+      const volHistory: any[] = [];
+      let seedPrice = stock.LTP;
+
+      // Create 150 historical candles for a rich look
+      for (let i = 150; i > 0; i--) {
+        const time = (now - (i * CANDLE_INTERVAL_S)) as UTCTimestamp;
+        const o = seedPrice;
+        const drift = (Math.random() - 0.5) * (o * 0.002);
+        const c = o + drift;
+        const h = Math.max(o, c) + (Math.random() * (o * 0.001));
+        const l = Math.min(o, c) - (Math.random() * (o * 0.001));
+        
+        history.push({ time, open: o, high: h, low: l, close: c });
+        volHistory.push({ 
+          time, 
+          value: Math.random() * 5000, 
+          color: c >= o ? '#2ebd8522' : '#f6465d22' 
+        });
+        seedPrice = c;
+      }
+
+      seriesRef.current.setData(history);
+      volumeRef.current.setData(volHistory);
+      
+      lastSymbolRef.current = stock.Symbol;
+      lastCandleRef.current = history[history.length - 1];
+      lastPriceRef.current = stock.LTP;
+      
+      // Auto-fit content on symbol change
+      chartRef.current?.timeScale().fitContent();
+    }
+  }, [stock?.Symbol]);
+
+  // 3. Live Price Ticks (Updates current candle ONLY)
+  useEffect(() => {
+    if (!stock || !seriesRef.current || !volumeRef.current) return;
+
+    const currentPrice = stock.LTP;
+    const now = Math.floor(Date.now() / 1000);
+    const currentIntervalBar = (Math.floor(now / CANDLE_INTERVAL_S) * CANDLE_INTERVAL_S) as UTCTimestamp;
+
+    // Visual Flash effect
+    if (currentPrice > lastPriceRef.current) setTickFlash('up');
+    else if (currentPrice < lastPriceRef.current) setTickFlash('down');
+    lastPriceRef.current = currentPrice;
     const timer = setTimeout(() => setTickFlash(null), 300);
 
-    // Initial Seed for new symbol
-    const history: CandlestickData[] = [];
-    const volHistory: any[] = [];
-    let lastClose = stock.LTP;
-    
-    // Mock 100 historical candles for continuity
-    for (let i = 100; i > 0; i--) {
-      const time = (now - (i * CANDLE_INTERVAL_S)) as UTCTimestamp;
-      const o = lastClose;
-      const move = (Math.random() - 0.5) * (o * 0.004);
-      const c = o + move;
-      const h = Math.max(o, c) + (Math.random() * 0.5);
-      const l = Math.min(o, c) - (Math.random() * 0.5);
-      
-      history.push({ time, open: o, high: h, low: l, close: c });
-      volHistory.push({ time, value: Math.random() * 1000, color: c >= o ? '#2ebd8522' : '#f6465d22' });
-      lastClose = c;
-    }
+    // Get the base open price for the current interval
+    // If the interval just changed, the open price is the previous candle's close
+    let openPrice = lastCandleRef.current ? lastCandleRef.current.close : currentPrice;
 
-    seriesRef.current.setData(history);
-    volumeRef.current.setData(volHistory);
-
-    // Live Update Logic
-    const currentCandleTime = (Math.floor(now / CANDLE_INTERVAL_S) * CANDLE_INTERVAL_S) as UTCTimestamp;
-    
-    const updateTick = () => {
-      if (!seriesRef.current || !volumeRef.current) return;
-      
-      seriesRef.current.update({
-        time: currentCandleTime,
-        open: lastClose, // Professional continuity: Open = Prev Close
-        high: Math.max(lastClose, stock.LTP),
-        low: Math.min(lastClose, stock.LTP),
-        close: stock.LTP,
-      });
-
-      volumeRef.current.update({
-        time: currentCandleTime,
-        value: Math.random() * 50,
-        color: stock.LTP >= lastClose ? '#2ebd8522' : '#f6465d22'
-      });
+    // Update (or Create) the bar at currentIntervalBar
+    const updatedCandle: CandlestickData = {
+      time: currentIntervalBar,
+      open: openPrice,
+      high: Math.max(openPrice, currentPrice, lastCandleRef.current?.time === currentIntervalBar ? lastCandleRef.current.high : currentPrice),
+      low: Math.min(openPrice, currentPrice, lastCandleRef.current?.time === currentIntervalBar ? lastCandleRef.current.low : currentPrice),
+      close: currentPrice,
     };
 
-    updateTick();
+    seriesRef.current.update(updatedCandle);
+    
+    // Update Volume for the same bar
+    volumeRef.current.update({
+      time: currentIntervalBar,
+      value: (lastCandleRef.current?.time === currentIntervalBar ? 100 : 50) + Math.random() * 100,
+      color: currentPrice >= openPrice ? '#2ebd8533' : '#f6465d33'
+    });
+
+    lastCandleRef.current = updatedCandle;
 
     return () => clearTimeout(timer);
-  }, [stock?.Symbol, stock?.LTP]);
+  }, [stock?.LTP]);
 
-  // Market Depth Simulation
+  // Simulated Order Book
   const depth = useMemo(() => {
     if (!stock) return { bids: [], asks: [] };
     const p = stock.LTP;
-    const gen = (start: number, step: number) => Array.from({ length: 5 }).map((_, i) => ({
+    const gen = (start: number, step: number) => Array.from({ length: 6 }).map((_, i) => ({
       price: start + (i * step),
-      vol: Math.floor(Math.random() * 800) + 100
+      vol: Math.floor(Math.random() * 1200) + 100
     }));
     return { asks: gen(p + 0.1, 0.15).reverse(), bids: gen(p - 0.1, -0.15) };
   }, [stock?.LTP]);
 
   if (!stock) return (
-    <div className="flex-1 bg-[#080a0c] flex items-center justify-center font-black text-slate-800 uppercase tracking-[0.4em]">
-      Waiting for Data Stream...
+    <div className="flex-1 bg-[#080a0c] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <Activity className="text-slate-800 animate-pulse" size={48} />
+        <span className="text-[10px] font-black text-slate-800 uppercase tracking-[0.5em]">Synchronizing...</span>
+      </div>
     </div>
   );
 
   return (
     <main className="flex-1 flex flex-col bg-[#080a0c] overflow-hidden select-none">
-      {/* TradingView-Style Header */}
+      {/* Header Info */}
       <div className="h-16 border-b border-[#1c2127] px-6 flex items-center justify-between bg-[#0b0e11] z-10">
         <div className="flex items-center gap-8">
           <div>
             <h2 className="text-xl font-black text-white tracking-tighter uppercase flex items-center gap-2">
               {stock.Symbol}
-              <span className="text-[10px] bg-[#1c2127] px-1.5 py-0.5 rounded text-slate-500 font-bold">LIVE</span>
+              <span className="text-[10px] bg-[#1c2127] px-1.5 py-0.5 rounded text-[#2ebd85] font-black border border-[#2ebd85]/20">LIVE</span>
             </h2>
             <div className="flex gap-3 text-[9px] font-black text-slate-600 uppercase mt-0.5 tracking-widest">
-              <span>EXCHANGE: <span className="text-slate-400">NEPSE</span></span>
-              <span>15S <span className="text-[#2ebd85]">●</span></span>
+              <span>PRC: <span className="text-slate-400">NPR</span></span>
+              <span>FEED: <span className="text-[#2ebd85]">STABLE</span></span>
             </div>
           </div>
           <div className="h-10 w-px bg-[#1c2127]"></div>
@@ -190,93 +220,95 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
                 {stock.LTP.toFixed(2)}
              </div>
              <div className={`text-[10px] font-bold mt-1 flex gap-2 ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
-               <span>{stock.Change >= 0 ? '+' : ''}{stock.Change.toFixed(2)}%</span>
-               <span className="opacity-40">CHG</span>
+               <span>{stock.Change >= 0 ? '▲' : '▼'} {Math.abs(stock.Change).toFixed(2)}%</span>
              </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-           <div className="flex flex-col items-end mr-4">
-              <span className="text-[9px] font-black text-slate-700 uppercase tracking-widest">Feed Status</span>
-              <div className="flex items-center gap-2 mt-1">
-                 <div className="w-1.5 h-1.5 rounded-full bg-[#2ebd85] animate-pulse"></div>
-                 <span className="text-[10px] font-bold text-slate-400">STABLE</span>
-              </div>
+        <div className="flex items-center gap-6">
+           <div className="text-right">
+              <span className="text-[9px] font-black text-slate-700 uppercase tracking-widest block">24h Volume</span>
+              <span className="text-[11px] font-black text-slate-400 tabular-nums">{(stock.Volume * 1240).toLocaleString()}</span>
            </div>
         </div>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* The Professional Chart Engine */}
+        {/* Chart Viewport */}
         <div className="flex-1 relative border-r border-[#1c2127]">
           {!isMarketOpen && (
-            <div className="absolute inset-0 z-40 bg-[#080a0c]/60 backdrop-blur-[1px] pointer-events-none flex items-center justify-center">
-               <div className="px-6 py-2.5 bg-[#111418] border border-white/5 rounded-xl flex items-center gap-3 shadow-2xl">
-                 <Moon size={14} className="text-indigo-500" />
-                 <span className="text-[10px] font-black text-white uppercase tracking-widest">Simulation Mode</span>
+            <div className="absolute top-4 left-4 z-40">
+               <div className="px-3 py-1.5 bg-[#111418]/80 border border-white/5 rounded-lg flex items-center gap-2 backdrop-blur-md shadow-2xl">
+                 <Moon size={12} className="text-indigo-500" />
+                 <span className="text-[9px] font-black text-white uppercase tracking-widest">Post-Market Simulation</span>
                </div>
             </div>
           )}
           <div ref={chartContainerRef} className="w-full h-full" />
         </div>
 
-        {/* Real-time Order Book */}
+        {/* L2 Depth View */}
         <div className="w-64 bg-[#0b0e11] border-l border-[#1c2127] flex flex-col font-mono text-[10px]">
            <div className="p-4 border-b border-[#1c2127] flex justify-between items-center bg-[#080a0c]">
-             <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Order Book</span>
-             <span className="text-[8px] text-[#2ebd85] font-black">L2 AGG</span>
+             <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Market Depth</span>
+             <div className="flex gap-1">
+               <div className="w-1 h-1 rounded-full bg-[#2ebd85]"></div>
+               <div className="w-1 h-1 rounded-full bg-[#2ebd85]"></div>
+               <div className="w-1 h-1 rounded-full bg-slate-800"></div>
+             </div>
            </div>
            
            <div className="flex-1 overflow-hidden p-2 flex flex-col">
               <div className="flex flex-col-reverse gap-0.5 mb-2">
                  {depth.asks.map((ask, i) => (
-                   <div key={i} className="flex justify-between px-2 py-0.5 relative group cursor-crosshair">
-                      <div className="absolute inset-y-0 right-0 bg-[#f6465d]/5" style={{ width: `${(ask.vol / 900) * 100}%` }}></div>
-                      <span className="text-[#f6465d] font-bold z-10">{ask.price.toFixed(2)}</span>
-                      <span className="text-slate-500 z-10">{ask.vol}</span>
+                   <div key={i} className="flex justify-between px-2 py-0.5 relative group">
+                      <div className="absolute inset-y-0 right-0 bg-[#f6465d]/5" style={{ width: `${(ask.vol / 1300) * 100}%` }}></div>
+                      <span className="text-[#f6465d] font-bold z-10 tabular-nums">{ask.price.toFixed(2)}</span>
+                      <span className="text-slate-600 z-10 tabular-nums">{ask.vol}</span>
                    </div>
                  ))}
               </div>
 
-              <div className="py-4 border-y border-[#1c2127] flex flex-col items-center justify-center bg-[#080a0c]">
-                 <div className={`text-base font-black tabular-nums ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
+              <div className="py-4 border-y border-[#1c2127] flex flex-col items-center justify-center bg-[#080a0c] relative overflow-hidden">
+                 <div className={`text-lg font-black tabular-nums relative z-10 ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
                    {stock.LTP.toFixed(2)}
                  </div>
-                 <div className="text-[8px] text-slate-700 font-black uppercase mt-1">Spread: 0.15</div>
+                 <div className="text-[8px] text-slate-700 font-black uppercase mt-1 relative z-10">Avg Spread: 0.12</div>
+                 <div className={`absolute inset-0 opacity-10 transition-colors ${tickFlash === 'up' ? 'bg-[#2ebd85]' : tickFlash === 'down' ? 'bg-[#f6465d]' : ''}`}></div>
               </div>
 
               <div className="flex flex-col gap-0.5 mt-2">
                  {depth.bids.map((bid, i) => (
-                   <div key={i} className="flex justify-between px-2 py-0.5 relative group cursor-crosshair">
-                      <div className="absolute inset-y-0 right-0 bg-[#2ebd85]/5" style={{ width: `${(bid.vol / 900) * 100}%` }}></div>
-                      <span className="text-[#2ebd85] font-bold z-10">{bid.price.toFixed(2)}</span>
-                      <span className="text-slate-500 z-10">{bid.vol}</span>
+                   <div key={i} className="flex justify-between px-2 py-0.5 relative group">
+                      <div className="absolute inset-y-0 right-0 bg-[#2ebd85]/5" style={{ width: `${(bid.vol / 1300) * 100}%` }}></div>
+                      <span className="text-[#2ebd85] font-bold z-10 tabular-nums">{bid.price.toFixed(2)}</span>
+                      <span className="text-slate-600 z-10 tabular-nums">{bid.vol}</span>
                    </div>
                  ))}
               </div>
            </div>
 
            <div className="p-4 bg-[#080a0c] border-t border-[#1c2127]">
-              <div className="flex justify-between text-[8px] font-black text-slate-600 uppercase mb-2">
-                 <span>Buy Pressure</span>
-                 <span className="text-[#2ebd85]">61.4%</span>
+              <div className="flex justify-between text-[8px] font-black text-slate-700 uppercase mb-2 tracking-widest">
+                 <span>Buy Liquidity</span>
+                 <span className="text-slate-500">58.2%</span>
               </div>
               <div className="h-1 w-full bg-[#1c2127] rounded-full overflow-hidden">
-                 <div className="h-full bg-[#2ebd85]" style={{ width: '61.4%' }}></div>
+                 <div className="h-full bg-[#2ebd85]" style={{ width: '58.2%' }}></div>
               </div>
            </div>
         </div>
       </div>
 
       {/* Analytics Telemetry */}
-      <div className="h-8 border-t border-[#1c2127] px-6 bg-[#080a0c] flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-600">
-         <div className="flex gap-6">
-            <span className="flex items-center gap-2"><Zap size={10} className="text-amber-500" /> V8 QUANT ENGINE</span>
-            <span className="flex items-center gap-2"><Activity size={10} /> LATENCY: 9ms</span>
+      <div className="h-8 border-t border-[#1c2127] px-6 bg-[#080a0c] flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-700">
+         <div className="flex gap-6 items-center">
+            <span className="flex items-center gap-2"><Zap size={10} className="text-amber-500" /> ENGINE: NEXORA_PRO_RT_V2</span>
+            <span className="w-1 h-1 rounded-full bg-slate-800"></span>
+            <span className="flex items-center gap-2">UPTIME: 99.9%</span>
          </div>
          <div className="flex gap-4">
-            <span>UNIX: {Math.floor(Date.now()/1000)}</span>
+            <span className="text-[#2ebd85]">● CONNECTION SECURE</span>
          </div>
       </div>
     </main>
