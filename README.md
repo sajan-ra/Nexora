@@ -1,69 +1,65 @@
 
-# Nexora Pro: Professional Paper Trading Terminal
+# Nexora Pro: Hybrid Snapshot Architecture
 
-Nexora Pro is a high-fidelity financial terminal and paper trading simulator built for precision, speed, and intelligence. Designed with a "Deep Dark" aesthetic inspired by Bloomberg and Binance terminals, it provides a professional-grade experience for mastering the Nepal Stock Market dynamics in a risk-free environment.
+Nexora Pro is a professional-grade paper trading platform designed for high-performance simulation of the Nepal Stock Market.
 
----
+## 🏆 Competition Presentation Overview
 
-## 🚀 Key Features
+### The Problem: Cloud Quota & High-Frequency Scalability
+Traditional trading apps fail on serverless architectures (like standard Firestore) because high-frequency updates (multiple per second) quickly exhaust "Write" quotas. 
 
-### 1. High-Fidelity Terminal
-- **Custom Candlestick Engine**: Anatomically correct SVG candlesticks with real shadows (wicks) and terminal pins for precise price action visualization.
-- **Dynamic Charting**: Real-time interval closure (15-second candles) with local price drifting for a "live" market feel.
-- **Pro Watchlist**: Searchable and filterable sidebar for 80+ major NEPSE symbols.
-
-### 2. Nexora Intelligence (AI Core)
-- **DeepSeek-V3 Integration**: Powered by Nvidia's NIM infrastructure, the AI doesn't just give answers—it shows its **Neural Reasoning Path** while analyzing market trends.
-- **Sentiment Analysis**: Real-time streaming of market outlooks, sector warnings, and volatility insights.
-
-### 3. Advanced Portfolio Management
-- **LTP Cross-Referencing**: Real-time calculation of Unrealized Profit/Loss based on the latest market snapshot.
-- **Order Execution**: Support for Market and Limit order simulation with margin checking and inventory validation.
-- **Transaction Ledger**: Persistent history of all trades with precise timestamps.
-
-### 4. Enterprise-Grade Optimization
-- **Dual-Interval Sync**: Updates UI every 4 seconds locally while batch-syncing to the cloud every 15 seconds to prevent database quota exhaustion.
-- **Single-Document Snapshotting**: Reduces database overhead by 98.7% compared to traditional per-stock updates.
+### The Nexora Solution: "Hybrid Realtime Protocol"
+Nexora Pro utilizes a custom-engineered **Triple-Layer Data Protocol**:
+1.  **Client-Side Drift (4s)**: To maintain sub-pixel price movement visuals for a snappy UI.
+2.  **Realtime Database Sync (15s)**: High-frequency market states are pushed to **Firebase Realtime Database**. RTDB is designed for low-latency, high-throughput updates without the per-write cost overhead of Firestore.
+3.  **Firestore Archival (2m)**: Every 2 minutes, the system takes a "Deep Archive" of the market state and commits it to **Cloud Firestore**. This ensures long-term persistence and auditability while reducing Firestore costs by **99.9%**.
 
 ---
 
-## 🛠 Technical Stack
+## 🛠 Technical Specifications
 
-- **Frontend**: React 19 (Concurrent Mode), TypeScript.
-- **Styling**: Tailwind CSS, Lucide Icons, Custom CSS Glassmorphism.
-- **Backend**: Firebase (Authentication & Firestore).
-- **AI Inference**: Nvidia NIM (DeepSeek-V3).
-- **Charts**: Recharts + Custom SVG Injection.
-
----
-
-## 📂 Project Structure & File Breakdown
-
-| File | Category | Responsibility |
-| :--- | :--- | :--- |
-| `index.html` | Core | Application shell using ESM Import Maps for zero-install portability. |
-| `index.tsx` | Entry | Initializes the React root and global strict mode. |
-| `App.tsx` | Central Hub | Contains the **Dual-Sync Engine**, routing logic, and global market simulation state. |
-| `types.ts` | Blueprint | Defines strict TypeScript interfaces for Stocks, Portfolios, and Transactions. |
-| `services/firebase.ts` | Backend | Configures Firebase App, Firestore, and Auth instances. |
-| `services/aiService.ts` | Intelligence | Handles streaming communication with the Nvidia DeepSeek-V3 inference cloud. |
-| `components/MainTerminal.tsx` | UI | The flagship component featuring the custom Candlestick rendering logic. |
-| `components/Sidebar.tsx` | UI | High-performance searchable watchlist for market discovery. |
-| `components/OrderPanel.tsx` | UI | Transaction processing unit with margin/inventory validation. |
-| `components/PortfolioView.tsx` | UI | Dynamic ledger showing user balance, holdings, and real-time P&L. |
-| `components/DashboardStats.tsx` | UI | Visualizes portfolio performance using Recharts area charts. |
-| `components/AIInsights.tsx` | UI | Renders the AI reasoning path and final markdown-based sentiment analysis. |
-| `components/Auth.tsx` | Security | Professional login/signup interface with Firebase integration. |
-| `firestore.rules` | Security | Server-side protection ensuring Admin-only market control and private portfolios. |
-| `vercel.json` | Config | SPA routing and security header configuration for deployment. |
+### Core Technologies
+- **UI Framework**: React 19 (Concurrent Mode) for seamless rendering.
+- **Backend Hybrid**: Firebase RTDB (Live Feed) + Firestore (Portfolio & Archive).
+- **Intelligence**: Nvidia NIM / DeepSeek-V3 (Neural Reasoning Model).
+- **Styling**: Tailored Dark-Mode System (HEX #080A0C).
+- **Visualization**: Custom SVG Candlestick Engine.
 
 ---
 
-## 🏗 Admin Configuration
+## 📂 Full Project File Breakdown
+
+### 🏗 Architecture & Core
+- **`App.tsx`**: The Central Nerve System. Manages the hybrid simulation, dual-database routing, and global state.
+- **`index.tsx`**: Entry point for the React application.
+- **`index.html`**: The host document using ESM Import Maps.
+- **`types.ts`**: Strict TypeScript interfaces for data integrity.
+- **`database.rules.json`**: Security rules for the Realtime Database (RTDB) ensuring Admin-only broadcasting.
+
+### 🛡 Services (The Logic Layer)
+- **`services/firebase.ts`**: Configuration for both Firestore and Realtime Database (RTDB).
+- **`services/aiService.ts`**: The Bridge to Nvidia's inference cloud for token-streaming analysis.
+- **`firestore.rules`**: Security logic for Firestore assets.
+
+### 📊 Components (The User Interface)
+- **`components/MainTerminal.tsx`**: High-fidelity chart engine with anatomical candlesticks.
+- **`components/OrderPanel.tsx`**: Transaction processing with margin logic.
+- **`components/Sidebar.tsx`**: Searchable high-density watchlist.
+- **`components/PortfolioView.tsx`**: Personal wealth tracker and P&L calculator.
+- **`components/AIInsights.tsx`**: DeepSeek-V3 analysis with Neural Reasoning display.
+- **`components/DashboardStats.tsx`**: Visual analytics using Recharts.
+- **`components/Auth.tsx`**: Secure identity management.
+
+---
+
+## ⚡ Key Technical Innovations for Presentation
+1.  **Hybrid DB Steering**: We use RTDB for live price action (speed) and Firestore for portfolios (durability).
+2.  **Anatomical Candlesticks**: Includes terminal pins and shadows for professional price-action context.
+3.  **Neural Thought Stream**: Displays AI's internal reasoning process before the final verdict.
+
+---
+
+## 🏗 Admin Protocol
 - **Admin UID**: `wL3xCPtylQc5pxcuaFOWNdW62UW2`
-- **Admin Powers**: Only the user with this specific UID can open/close the market and reset the global price cache.
-
----
-
-## 🛡 Disclaimer
-Nexora Pro is a simulation platform. The "LTP" and market movements are generated by a localized drifting algorithm designed to mimic real-world market patterns for educational purposes. All financial insights provided by Nexora Intelligence are pattern-based and do not constitute financial advice.
+- **RTDB Rules**: Only the Admin UID can write to `market/snapshot` and `settings/market`. All authenticated users have read access to the market feed.
+- **Capabilities**: RTDB Broadcasting, Global Market Control, and Firestore Archiving.

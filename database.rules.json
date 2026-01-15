@@ -1,0 +1,22 @@
+
+{
+  "rules": {
+    "settings": {
+      "market": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === 'wL3xCPtylQc5pxcuaFOWNdW62UW2'"
+      }
+    },
+    "market": {
+      "snapshot": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === 'wL3xCPtylQc5pxcuaFOWNdW62UW2'",
+        "stocks": {
+          "$symbol": {
+            ".validate": "newData.hasChildren(['ltp', 'change', 'high', 'low', 'volume'])"
+          }
+        }
+      }
+    }
+  }
+}

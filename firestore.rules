@@ -6,7 +6,7 @@ service cloud.firestore {
     
     // Admin Identification
     function isAdmin() {
-      return request.auth != null && request.auth.uid == "mgDRF6WPYLR8G2AkbSlT6ndsbyI3";
+      return request.auth != null && request.auth.uid == "wL3xCPtylQc5pxcuaFOWNdW62UW2";
     }
 
     // Portfolios: Users can only manage their own documents
@@ -20,11 +20,10 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
     
-    // Market Data: Authenticated users can read.
-    // In simulation mode, users need to update local drifting, but Admin is the true source.
-    match /market/{symbol} {
+    // Market Data Snapshot: Optimizing for 1 doc read per update cycle
+    match /market/snapshot {
       allow read: if request.auth != null;
-      allow write: if request.auth != null; // Shared simulation drift
+      allow write: if isAdmin(); 
     }
     
     // Deny all other access

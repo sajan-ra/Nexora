@@ -8,9 +8,10 @@ import PortfolioView from './components/PortfolioView';
 import DashboardStats from './components/DashboardStats';
 import AIInsights from './components/AIInsights';
 import Auth from './components/Auth';
-import { auth, db } from './services/firebase';
+import { auth, db, rtdb } from './services/firebase';
 import { onAuthStateChanged, signOut, User, updateProfile } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, updateDoc, increment, collection, writeBatch } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, updateDoc, increment } from 'firebase/firestore';
+import { ref, onValue, set as rtdbSet, update as rtdbUpdate } from 'firebase/database';
 import { TrendingUp, LayoutDashboard, Briefcase, Cpu, Loader2, LogOut, Power, ShieldCheck, RefreshCw } from 'lucide-react';
 
 const ADMIN_UID = "wL3xCPtylQc5pxcuaFOWNdW62UW2";
@@ -26,7 +27,8 @@ const SYMBOLS = {
 const ALL_FLAT_SYMBOLS = Array.from(new Set(Object.values(SYMBOLS).flat()));
 const INITIAL_BALANCE = 50000;
 const SIMULATION_INTERVAL = 4000; 
-const DB_SYNC_THRESHOLD = 15000; 
+const RTDB_SYNC_INTERVAL = 15000; // Fast sync for active market
+const FIRESTORE_ARCHIVE_INTERVAL = 120000; // Slow sync (2m) for database persistence
 
 const BASE_PRICES: Record<string, number> = {
   "NABIL": 498.6, "NMB": 235.1, "NICA": 321, "GBIME": 228, "EBL": 647.29, "HBL": 187.9, "NIBL": 150, "PCBL": 257, "SBL": 374.9, "SCB": 624.79, "ADBL": 288, "CZBIL": 191.5, "MBL": 220, "KBL": 178.4, "LBL": 173, "SANIMA": 319, "PRVU": 182, "BOKL": 207.3, "MEGA": 219, "SRBL": 173.1, "MNBBL": 342.6, "JBBL": 318, "GBBL": 374, "SHINE": 391, "SADBL": 381, "CORBL": 1450, "SAPDBL": 793.1, "MLBL": 354.5, "KSBBL": 429.5, "GUFL": 486, "PFL": 358, "MFIL": 709, "CFCL": 462.1, "ICFC": 620, "BFCL": 165, "SFCL": 375, "NLIC": 750.5, "LICN": 876, "ALICL": 457, "PLIC": 340, "SLICL": 387, "SNLI": 504, "ILI": 442, "ULI": 393.8, "NICL": 504.9, "SICL": 635, "NIL": 602.5, "PRIN": 657, "IGI": 414, "SALICO": 600.3, "SGIC": 472, "SPIL": 740, "HEI": 500, "RBCL": 14940, "CHCL": 498, "BPCL": 714, "NHPC": 190.8, "SHPC": 515, "RADHI": 730, "SAHAS": 543, "UPCL": 359, "UNHPL": 481.5, "AKPL": 244, "API": 289, "NGPL": 387.5, "NYADI": 370, "DHPL": 288, "RHPL": 268.8, "HPPL": 472, "CIT": 1809.5, "HIDCL": 254.5, "NIFRA": 261.2, "NRN": 1345.2, "HATHY": 886.9, "ENL": 890, "UNL": 47200, "HDL": 1132.2, "SHIVM": 575, "BNT": 11952, "BNL": 15904.9, "SARBTM": 865, "GCIL": 405.3, "SONA": 414.8, "NLO": 254.1, "OMPL": 1239, "STC": 5405, "BBC": 4864, "NTC": 895.4, "OHL": 691.1, "TRH": 708, "YHL": 600, "AHPC": 272.3
@@ -54,7 +56,8 @@ const App: React.FC = () => {
   const [portfolio, setPortfolio] = useState<Portfolio>({ balance: INITIAL_BALANCE, holdings: [], history: [] });
 
   const trendPhaseRef = useRef<Record<string, { bias: number, duration: number }>>({});
-  const lastCloudSyncRef = useRef<number>(0);
+  const lastRtdbSyncRef = useRef<number>(0);
+  const lastFirestoreArchiveRef = useRef<number>(0);
   const isAdmin = useMemo(() => user?.uid === ADMIN_UID, [user]);
 
   useEffect(() => {
@@ -72,25 +75,28 @@ const App: React.FC = () => {
     }
   };
 
+  // Realtime Market Toggle
   useEffect(() => {
     if (!user) return;
-    const unsub = onSnapshot(doc(db, 'settings', 'market'), (snap) => {
-      if (snap.exists()) {
-        setIsMarketOpen(snap.data().isOpen);
+    const marketRef = ref(rtdb, 'settings/market');
+    return onValue(marketRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setIsMarketOpen(snapshot.val().isOpen);
       } else if (isAdmin) {
-        setDoc(doc(db, 'settings', 'market'), { isOpen: false });
+        rtdbSet(marketRef, { isOpen: false });
       }
     });
-    return () => unsub();
   }, [user, isAdmin]);
 
+  // Realtime High-Frequency Market Feed
   useEffect(() => {
     if (!user) return;
-    const unsub = onSnapshot(doc(db, 'market', 'snapshot'), (snap) => {
-      if (!snap.exists()) return;
+    const marketSnapshotRef = ref(rtdb, 'market/snapshot');
+    return onValue(marketSnapshotRef, (snapshot) => {
+      if (!snapshot.exists()) return;
       if (isAdmin && isMarketOpen) return;
       
-      const data = snap.data().stocks || {};
+      const data = snapshot.val().stocks || {};
       setStocks(current => current.map(s => {
         const up = data[s.Symbol];
         if (!up) return s;
@@ -104,9 +110,9 @@ const App: React.FC = () => {
         };
       }));
     });
-    return () => unsub();
   }, [user, isAdmin, isMarketOpen]);
 
+  // Admin Broadcast Engine (RTDB for Speed, Firestore for Persistence)
   useEffect(() => {
     if (!isAdmin || !isMarketOpen || !user) return;
 
@@ -148,21 +154,24 @@ const App: React.FC = () => {
 
       setStocks(updatedStocks);
 
-      if (now - lastCloudSyncRef.current >= DB_SYNC_THRESHOLD) {
+      // 1. Sync to RTDB every 15s (Cheap and Fast)
+      if (now - lastRtdbSyncRef.current >= RTDB_SYNC_INTERVAL) {
         const snapshot: Record<string, any> = {};
         updatedStocks.forEach(s => {
           snapshot[s.Symbol] = { ltp: s.LTP, change: s.Change, high: s.High, low: s.Low, volume: s.Volume };
         });
+        rtdbUpdate(ref(rtdb, 'market'), { snapshot: { stocks: snapshot, updatedAt: now } });
+        lastRtdbSyncRef.current = now;
+      }
 
-        try {
-          await setDoc(doc(db, 'market', 'snapshot'), { 
-            stocks: snapshot,
-            updatedAt: now 
-          }, { merge: true });
-          lastCloudSyncRef.current = now;
-        } catch (e) {
-          console.error("Cloud Sync Threshold Breached:", e);
-        }
+      // 2. Sync to Firestore every 2m (Durable Persistence)
+      if (now - lastFirestoreArchiveRef.current >= FIRESTORE_ARCHIVE_INTERVAL) {
+        const snapshot: Record<string, any> = {};
+        updatedStocks.forEach(s => {
+          snapshot[s.Symbol] = { ltp: s.LTP, change: s.Change, high: s.High, low: s.Low, volume: s.Volume };
+        });
+        setDoc(doc(db, 'market', 'snapshot'), { stocks: snapshot, updatedAt: now }, { merge: true });
+        lastFirestoreArchiveRef.current = now;
       }
     }, SIMULATION_INTERVAL);
 
@@ -173,14 +182,14 @@ const App: React.FC = () => {
     if (!isAdmin) return;
     setIsSyncing(true);
     try {
-      await updateDoc(doc(db, 'settings', 'market'), { isOpen: !isMarketOpen });
+      await rtdbUpdate(ref(rtdb, 'settings/market'), { isOpen: !isMarketOpen });
     } finally {
       setIsSyncing(false);
     }
   };
 
   const resetMarket = async () => {
-    if (!isAdmin || !window.confirm("RESET CLOUD CACHE?")) return;
+    if (!isAdmin || !window.confirm("ERASE REALTIME CACHE & ARCHIVE?")) return;
     setIsSyncing(true);
     try {
       const snapshot: Record<string, any> = {};
@@ -188,8 +197,11 @@ const App: React.FC = () => {
         const price = BASE_PRICES[symbol] || 100.0;
         snapshot[symbol] = { ltp: price, change: 0, high: price, low: price, volume: 1000 };
       });
-      await setDoc(doc(db, 'market', 'snapshot'), { stocks: snapshot, updatedAt: Date.now() });
-      lastCloudSyncRef.current = 0;
+      const now = Date.now();
+      await rtdbSet(ref(rtdb, 'market/snapshot'), { stocks: snapshot, updatedAt: now });
+      await setDoc(doc(db, 'market', 'snapshot'), { stocks: snapshot, updatedAt: now });
+      lastRtdbSyncRef.current = 0;
+      lastFirestoreArchiveRef.current = 0;
     } finally {
       setIsSyncing(false);
     }
