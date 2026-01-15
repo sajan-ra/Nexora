@@ -1,352 +1,283 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { createChart, IChartApi, ISeriesApi, CandlestickData, UTCTimestamp, ColorType } from 'lightweight-charts';
 import { Stock, Holding } from '../types';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  Cell,
-  ReferenceLine
-} from 'recharts';
-import { Moon, Activity, Target, Zap, TrendingUp, TrendingDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Moon, Activity, Zap, TrendingUp, TrendingDown } from 'lucide-react';
 
-const TIMEFRAME_MS = 15000; 
-
-interface ExtendedStock extends Stock {
-  isLive?: boolean;
-}
+const CANDLE_INTERVAL_S = 15; // 15s candles
 
 interface MainTerminalProps {
-  stock?: ExtendedStock;
+  stock?: Stock;
   holdings: Holding[];
-  stocks: ExtendedStock[];
+  stocks: Stock[];
   isMarketOpen: boolean;
 }
 
-interface Candle {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  range: [number, number]; 
-  pattern?: string;
-  isForming?: boolean;
-  signal?: 'BUY' | 'SELL' | 'NEUTRAL';
-}
-
-const Candlestick = (props: any) => {
-  const { x, y, width, height, payload } = props;
-  if (!payload || height === undefined) return null;
-
-  const { open, close, high, low, isForming, pattern, signal } = payload;
-  const isUp = close >= open;
-  const color = isUp ? "#2ebd85" : "#f6465d";
-  
-  const priceRange = high - low;
-  const ratio = priceRange <= 0 ? 0 : height / priceRange;
-
-  const bodyMax = Math.max(open, close);
-  const bodyMin = Math.min(open, close);
-  
-  const bodyTop = y + (high - bodyMax) * ratio;
-  const bodyBottom = y + (high - bodyMin) * ratio;
-  const bodyHeight = Math.max(2, bodyBottom - bodyTop);
-
-  const centerX = x + width / 2;
-
-  return (
-    <g>
-      {/* High-Low Wick */}
-      <line x1={centerX} y1={y} x2={centerX} y2={y + height} stroke={color} strokeWidth={1} />
-
-      {/* Real Body */}
-      <rect 
-        x={x + 1} 
-        y={bodyTop} 
-        width={width - 2} 
-        height={bodyHeight} 
-        fill={isUp ? color : 'transparent'} 
-        stroke={color}
-        strokeWidth={1}
-        fillOpacity={isForming ? 0.4 : 1}
-      />
-
-      {/* Pattern Label Icons */}
-      {pattern && (
-        <g transform={`translate(${centerX}, ${y - 15})`}>
-           <text textAnchor="middle" fill={color} fontSize="8" fontWeight="900" className="uppercase tracking-tighter">
-             {pattern}
-           </text>
-        </g>
-      )}
-    </g>
-  );
-};
-
 const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, isMarketOpen }) => {
-  const [historyBuffer, setHistoryBuffer] = useState<Record<string, Candle[]>>({});
-  const currentOHLCRef = useRef<Record<string, { o: number, h: number, l: number, v: number, startTime: number }>>({});
-  const [flash, setFlash] = useState<'up' | 'down' | null>(null);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  
+  const [tickFlash, setTickFlash] = useState<'up' | 'down' | null>(null);
   const prevPrice = useRef<number>(0);
 
-  const detectPatterns = (current: Candle, previous?: Candle): { pattern?: string, signal?: 'BUY' | 'SELL' | 'NEUTRAL' } => {
-    const bodySize = Math.abs(current.close - current.open);
-    const totalRange = current.high - current.low;
-    const upperWick = current.high - Math.max(current.open, current.close);
-    const lowerWick = Math.min(current.open, current.close) - current.low;
-
-    if (totalRange === 0) return { signal: 'NEUTRAL' };
-    if (bodySize <= totalRange * 0.1) return { pattern: "Doji", signal: 'NEUTRAL' };
-    if (lowerWick >= bodySize * 2 && upperWick <= bodySize * 0.5) return { pattern: "Hammer", signal: 'BUY' };
-    if (upperWick >= bodySize * 2 && lowerWick <= bodySize * 0.5) return { pattern: "S.Star", signal: 'SELL' };
-
-    if (previous) {
-      const isPrevDown = previous.close < previous.open;
-      const isCurrUp = current.close > current.open;
-      if (isPrevDown && isCurrUp && current.close > previous.open) return { pattern: "Bullish", signal: 'BUY' };
-      if (!isPrevDown && !isCurrUp && current.close < previous.open) return { pattern: "Bearish", signal: 'SELL' };
-    }
-    return { signal: 'NEUTRAL' };
-  };
-
+  // Initialize TradingView Chart
   useEffect(() => {
-    if (!stock) return;
-    if (stock.LTP > prevPrice.current) setFlash('up');
-    else if (stock.LTP < prevPrice.current) setFlash('down');
-    prevPrice.current = stock.LTP;
-    const timer = setTimeout(() => setFlash(null), 300);
-    return () => clearTimeout(timer);
-  }, [stock?.LTP]);
+    if (!chartContainerRef.current) return;
 
-  useEffect(() => {
-    if (!stock) return;
-    const symbol = stock.Symbol;
-    if (!historyBuffer[symbol]) {
-      const seeded: Candle[] = [];
-      let lastClose = stock.LTP - 5;
-      const now = Date.now();
-      for (let i = 40; i > 0; i--) {
-        const o = lastClose;
-        const drift = (Math.random() - 0.5) * 4;
-        const c = o + drift;
-        const candle: Candle = {
-          time: now - (i * TIMEFRAME_MS),
-          open: o, high: Math.max(o, c) + 1, low: Math.min(o, c) - 1, close: c,
-          volume: Math.random() * 5000, range: [Math.min(o, c) - 1, Math.max(o, c) + 1]
-        };
-        const { pattern, signal } = detectPatterns(candle, seeded[seeded.length - 1]);
-        seeded.push({ ...candle, pattern, signal });
-        lastClose = c;
-      }
-      setHistoryBuffer(prev => ({ ...prev, [symbol]: seeded }));
-      currentOHLCRef.current[symbol] = { o: lastClose, h: lastClose, l: lastClose, v: 0, startTime: Math.floor(now / TIMEFRAME_MS) * TIMEFRAME_MS };
-    }
-  }, [stock?.Symbol]);
-
-  useEffect(() => {
-    if (!stock) return;
-    const symbol = stock.Symbol;
-    const currentPrice = stock.LTP;
-    const now = Date.now();
-    const intervalStart = Math.floor(now / TIMEFRAME_MS) * TIMEFRAME_MS;
-
-    setHistoryBuffer(prev => {
-      const history = prev[symbol] || [];
-      const lastClosed = history.filter(c => !c.isForming).slice(-1)[0];
-      if (!currentOHLCRef.current[symbol]) {
-        currentOHLCRef.current[symbol] = { o: lastClosed?.close || currentPrice, h: currentPrice, l: currentPrice, v: 0, startTime: intervalStart };
-      }
-      const active = currentOHLCRef.current[symbol];
-
-      if (intervalStart > active.startTime) {
-        const closed: Candle = {
-          time: active.startTime, open: active.o, high: active.h, low: active.l, close: currentPrice,
-          volume: active.v + Math.random() * 100, range: [active.l, active.h]
-        };
-        const { pattern, signal } = detectPatterns(closed, lastClosed);
-        currentOHLCRef.current[symbol] = { o: currentPrice, h: currentPrice, l: currentPrice, v: 0, startTime: intervalStart };
-        return { ...prev, [symbol]: [...history.filter(c => !c.isForming), { ...closed, pattern, signal }].slice(-60) };
-      }
-
-      currentOHLCRef.current[symbol] = { ...active, h: Math.max(active.h, currentPrice), l: Math.min(active.l, currentPrice), v: active.v + 5 };
-      const forming: Candle = {
-        time: active.startTime, open: active.o, high: Math.max(active.h, currentPrice), low: Math.min(active.l, currentPrice),
-        close: currentPrice, volume: active.v, range: [Math.min(active.l, currentPrice), Math.max(active.h, currentPrice)], isForming: true
-      };
-      return { ...prev, [symbol]: [...history.filter(c => !c.isForming), forming] };
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: '#080a0c' },
+        textColor: '#475569',
+        fontSize: 10,
+        fontFamily: 'Inter, sans-serif',
+      },
+      grid: {
+        vertLines: { color: '#1c2127', style: 2 },
+        horzLines: { color: '#1c2127', style: 2 },
+      },
+      crosshair: {
+        mode: 0,
+        vertLine: { color: '#334155', width: 1, style: 3, labelBackgroundColor: '#111418' },
+        horzLine: { color: '#334155', width: 1, style: 3, labelBackgroundColor: '#111418' },
+      },
+      timeScale: {
+        borderColor: '#1c2127',
+        timeVisible: true,
+        secondsVisible: true,
+      },
+      rightPriceScale: {
+        borderColor: '#1c2127',
+        scaleMargins: { top: 0.1, bottom: 0.2 },
+      },
     });
-  }, [stock?.LTP, stock?.Symbol]);
 
-  const displayData = useMemo(() => (stock ? historyBuffer[stock.Symbol] || [] : []), [historyBuffer, stock?.Symbol]);
-  
-  // Simulated L2 Order Book
-  const orderBook = useMemo(() => {
+    const series = chart.addCandlestickSeries({
+      upColor: '#2ebd85',
+      downColor: '#f6465d',
+      borderVisible: false,
+      wickUpColor: '#2ebd85',
+      wickDownColor: '#f6465d',
+    });
+
+    const volume = chart.addHistogramSeries({
+      color: '#2ebd8522',
+      priceFormat: { type: 'volume' },
+      priceScaleId: '', // Overlay on price
+    });
+    
+    volume.priceScale().applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = series;
+    volumeRef.current = volume;
+
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({ 
+          width: chartContainerRef.current.clientWidth,
+          height: chartContainerRef.current.clientHeight 
+        });
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+    };
+  }, []);
+
+  // Seed and Update Data
+  useEffect(() => {
+    if (!stock || !seriesRef.current || !volumeRef.current) return;
+
+    const symbol = stock.Symbol;
+    const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
+    
+    // Check if price changed for flash effect
+    if (stock.LTP > prevPrice.current) setTickFlash('up');
+    else if (stock.LTP < prevPrice.current) setTickFlash('down');
+    prevPrice.current = stock.LTP;
+    const timer = setTimeout(() => setTickFlash(null), 300);
+
+    // Initial Seed for new symbol
+    const history: CandlestickData[] = [];
+    const volHistory: any[] = [];
+    let lastClose = stock.LTP;
+    
+    // Mock 100 historical candles for continuity
+    for (let i = 100; i > 0; i--) {
+      const time = (now - (i * CANDLE_INTERVAL_S)) as UTCTimestamp;
+      const o = lastClose;
+      const move = (Math.random() - 0.5) * (o * 0.004);
+      const c = o + move;
+      const h = Math.max(o, c) + (Math.random() * 0.5);
+      const l = Math.min(o, c) - (Math.random() * 0.5);
+      
+      history.push({ time, open: o, high: h, low: l, close: c });
+      volHistory.push({ time, value: Math.random() * 1000, color: c >= o ? '#2ebd8522' : '#f6465d22' });
+      lastClose = c;
+    }
+
+    seriesRef.current.setData(history);
+    volumeRef.current.setData(volHistory);
+
+    // Live Update Logic
+    const currentCandleTime = (Math.floor(now / CANDLE_INTERVAL_S) * CANDLE_INTERVAL_S) as UTCTimestamp;
+    
+    const updateTick = () => {
+      if (!seriesRef.current || !volumeRef.current) return;
+      
+      seriesRef.current.update({
+        time: currentCandleTime,
+        open: lastClose, // Professional continuity: Open = Prev Close
+        high: Math.max(lastClose, stock.LTP),
+        low: Math.min(lastClose, stock.LTP),
+        close: stock.LTP,
+      });
+
+      volumeRef.current.update({
+        time: currentCandleTime,
+        value: Math.random() * 50,
+        color: stock.LTP >= lastClose ? '#2ebd8522' : '#f6465d22'
+      });
+    };
+
+    updateTick();
+
+    return () => clearTimeout(timer);
+  }, [stock?.Symbol, stock?.LTP]);
+
+  // Market Depth Simulation
+  const depth = useMemo(() => {
     if (!stock) return { bids: [], asks: [] };
-    const price = stock.LTP;
-    const generateLevel = (p: number, v: number) => ({ price: p, vol: Math.floor(Math.random() * v) + 10 });
-    const asks = Array.from({ length: 5 }).map((_, i) => generateLevel(price + (i + 1) * 0.15, 200)).reverse();
-    const bids = Array.from({ length: 5 }).map((_, i) => generateLevel(price - (i + 1) * 0.15, 200));
-    return { asks, bids };
+    const p = stock.LTP;
+    const gen = (start: number, step: number) => Array.from({ length: 5 }).map((_, i) => ({
+      price: start + (i * step),
+      vol: Math.floor(Math.random() * 800) + 100
+    }));
+    return { asks: gen(p + 0.1, 0.15).reverse(), bids: gen(p - 0.1, -0.15) };
   }, [stock?.LTP]);
 
-  if (!stock) return <div className="flex-1 bg-[#080a0c] flex items-center justify-center font-black text-slate-800 animate-pulse">TERMINAL STANDBY...</div>;
+  if (!stock) return (
+    <div className="flex-1 bg-[#080a0c] flex items-center justify-center font-black text-slate-800 uppercase tracking-[0.4em]">
+      Waiting for Data Stream...
+    </div>
+  );
 
   return (
-    <main className="flex-1 flex flex-col bg-[#080a0c] overflow-hidden">
-      {/* Dynamic Header */}
-      <div className="h-16 border-b border-[#1c2127] px-6 flex items-center justify-between bg-[#111418]/60 backdrop-blur-xl">
-        <div className="flex items-center gap-6">
-          <div className="flex flex-col">
+    <main className="flex-1 flex flex-col bg-[#080a0c] overflow-hidden select-none">
+      {/* TradingView-Style Header */}
+      <div className="h-16 border-b border-[#1c2127] px-6 flex items-center justify-between bg-[#0b0e11] z-10">
+        <div className="flex items-center gap-8">
+          <div>
             <h2 className="text-xl font-black text-white tracking-tighter uppercase flex items-center gap-2">
               {stock.Symbol}
-              <span className="text-[10px] bg-[#1c2127] px-2 py-0.5 rounded text-slate-500 font-bold">EQ</span>
+              <span className="text-[10px] bg-[#1c2127] px-1.5 py-0.5 rounded text-slate-500 font-bold">LIVE</span>
             </h2>
-            <span className="text-[9px] text-slate-500 font-black tracking-widest uppercase">Nexora Spot Exchange</span>
-          </div>
-          <div className="h-8 w-px bg-[#1c2127]"></div>
-          <div className={`p-2 rounded-lg transition-colors duration-300 ${flash === 'up' ? 'bg-[#2ebd85]/20' : flash === 'down' ? 'bg-[#f6465d]/20' : ''}`}>
-            <div className={`text-2xl font-black tabular-nums leading-none ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
-              {stock.LTP.toFixed(2)}
+            <div className="flex gap-3 text-[9px] font-black text-slate-600 uppercase mt-0.5 tracking-widest">
+              <span>EXCHANGE: <span className="text-slate-400">NEPSE</span></span>
+              <span>15S <span className="text-[#2ebd85]">●</span></span>
             </div>
+          </div>
+          <div className="h-10 w-px bg-[#1c2127]"></div>
+          <div className={`transition-all duration-300 ${tickFlash === 'up' ? 'text-[#2ebd85] scale-105' : tickFlash === 'down' ? 'text-[#f6465d] scale-105' : 'text-white'}`}>
+             <div className="text-2xl font-black tabular-nums leading-none">
+                {stock.LTP.toFixed(2)}
+             </div>
+             <div className={`text-[10px] font-bold mt-1 flex gap-2 ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
+               <span>{stock.Change >= 0 ? '+' : ''}{stock.Change.toFixed(2)}%</span>
+               <span className="opacity-40">CHG</span>
+             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex flex-col items-end">
-             <span className="text-[9px] text-slate-600 font-black uppercase tracking-widest">Network Load</span>
-             <div className="flex gap-0.5 mt-1">
-                {[1,2,3,4,5].map(i => <div key={i} className={`w-1 h-3 rounded-full ${i <= 4 ? 'bg-[#2ebd85]' : 'bg-slate-800'}`}></div>)}
-             </div>
-          </div>
-          <div className="h-8 w-px bg-[#1c2127]"></div>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#2ebd85]/20 bg-[#2ebd85]/5 text-[#2ebd85]">
-            <Activity size={12} className="animate-pulse" />
-            <span className="text-[10px] font-black uppercase tracking-tighter">Live HFT Core</span>
-          </div>
+        <div className="flex items-center gap-3">
+           <div className="flex flex-col items-end mr-4">
+              <span className="text-[9px] font-black text-slate-700 uppercase tracking-widest">Feed Status</span>
+              <div className="flex items-center gap-2 mt-1">
+                 <div className="w-1.5 h-1.5 rounded-full bg-[#2ebd85] animate-pulse"></div>
+                 <span className="text-[10px] font-bold text-slate-400">STABLE</span>
+              </div>
+           </div>
         </div>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Real Chart Area */}
+        {/* The Professional Chart Engine */}
         <div className="flex-1 relative border-r border-[#1c2127]">
           {!isMarketOpen && (
-            <div className="absolute inset-0 z-30 bg-[#080a0c]/60 backdrop-blur-[2px] pointer-events-none flex items-center justify-center">
-              <div className="bg-[#111418] border border-white/5 p-4 rounded-xl flex items-center gap-3 shadow-2xl">
-                 <Moon size={16} className="text-indigo-400" />
-                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Night Session Simulation</span>
-              </div>
+            <div className="absolute inset-0 z-40 bg-[#080a0c]/60 backdrop-blur-[1px] pointer-events-none flex items-center justify-center">
+               <div className="px-6 py-2.5 bg-[#111418] border border-white/5 rounded-xl flex items-center gap-3 shadow-2xl">
+                 <Moon size={14} className="text-indigo-500" />
+                 <span className="text-[10px] font-black text-white uppercase tracking-widest">Simulation Mode</span>
+               </div>
             </div>
           )}
-          
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={displayData} margin={{ top: 40, right: 60, left: 10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="1 4" stroke="#1c2127" vertical={false} />
-              <XAxis dataKey="time" hide />
-              <YAxis 
-                orientation="right" 
-                domain={['auto', 'auto']} 
-                tick={{ fill: '#475569', fontSize: 10, fontWeight: '900' }} 
-                axisLine={false} 
-                tickLine={false}
-                width={50}
-              />
-              <Tooltip
-                isAnimationActive={false}
-                contentStyle={{ backgroundColor: '#080a0c', border: '1px solid #1c2127', borderRadius: '4px' }}
-                content={({ active, payload }) => {
-                  if (active && payload?.length) {
-                    const d = payload[0].payload;
-                    return (
-                      <div className="text-[10px] font-black p-2 uppercase space-y-1">
-                        <div className="flex justify-between gap-4 text-slate-500"><span>O</span><span className="text-white">{d.open.toFixed(2)}</span></div>
-                        <div className="flex justify-between gap-4 text-[#2ebd85]"><span>H</span><span className="text-white">{d.high.toFixed(2)}</span></div>
-                        <div className="flex justify-between gap-4 text-[#f6465d]"><span>L</span><span className="text-white">{d.low.toFixed(2)}</span></div>
-                        <div className="flex justify-between gap-4 text-slate-300"><span>C</span><span className="text-white">{d.close.toFixed(2)}</span></div>
-                      </div>
-                    );
-                  }
-                  return null;
-                }}
-              />
-              <ReferenceLine y={stock.LTP} stroke={stock.Change >= 0 ? "#2ebd85" : "#f6465d"} strokeDasharray="3 3" label={{ position: 'right', value: stock.LTP.toFixed(2), fill: '#fff', fontSize: 9, fontWeight: 'bold', className: 'bg-black' }} />
-              <Bar dataKey="range" shape={<Candlestick />} isAnimationActive={false} />
-              {/* Volume Bars at bottom */}
-              <Bar dataKey="volume" yAxisId="vol" isAnimationActive={false}>
-                {displayData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.close >= entry.open ? '#2ebd8533' : '#f6465d33'} />
-                ))}
-              </Bar>
-              <YAxis yAxisId="vol" hide domain={[0, dataMax => dataMax * 5]} />
-            </BarChart>
-          </ResponsiveContainer>
+          <div ref={chartContainerRef} className="w-full h-full" />
         </div>
 
-        {/* L2 Order Book Sidebar */}
-        <div className="w-56 bg-[#111418]/30 flex flex-col text-[10px] font-bold overflow-hidden border-l border-[#1c2127]">
-          <div className="p-3 border-b border-[#1c2127] text-slate-600 uppercase tracking-widest text-[9px] font-black">Market Depth</div>
-          <div className="flex-1 flex flex-col p-2 space-y-1 overflow-hidden">
-            {/* ASKS (SELLS) */}
-            <div className="flex flex-col-reverse gap-0.5">
-              {orderBook.asks.map((ask, i) => (
-                <div key={i} className="flex justify-between px-2 py-0.5 relative group">
-                  <div className="absolute inset-y-0 right-0 bg-[#f6465d]/5 transition-all group-hover:bg-[#f6465d]/10" style={{ width: `${(ask.vol / 200) * 100}%` }}></div>
-                  <span className="text-[#f6465d] relative z-10 tabular-nums">{ask.price.toFixed(2)}</span>
-                  <span className="text-slate-500 relative z-10 tabular-nums">{ask.vol}</span>
-                </div>
-              ))}
-            </div>
-            
-            <div className="py-2 border-y border-[#1c2127] text-center">
-              <div className={`text-sm font-black tabular-nums ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
-                {stock.LTP.toFixed(2)}
+        {/* Real-time Order Book */}
+        <div className="w-64 bg-[#0b0e11] border-l border-[#1c2127] flex flex-col font-mono text-[10px]">
+           <div className="p-4 border-b border-[#1c2127] flex justify-between items-center bg-[#080a0c]">
+             <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Order Book</span>
+             <span className="text-[8px] text-[#2ebd85] font-black">L2 AGG</span>
+           </div>
+           
+           <div className="flex-1 overflow-hidden p-2 flex flex-col">
+              <div className="flex flex-col-reverse gap-0.5 mb-2">
+                 {depth.asks.map((ask, i) => (
+                   <div key={i} className="flex justify-between px-2 py-0.5 relative group cursor-crosshair">
+                      <div className="absolute inset-y-0 right-0 bg-[#f6465d]/5" style={{ width: `${(ask.vol / 900) * 100}%` }}></div>
+                      <span className="text-[#f6465d] font-bold z-10">{ask.price.toFixed(2)}</span>
+                      <span className="text-slate-500 z-10">{ask.vol}</span>
+                   </div>
+                 ))}
               </div>
-              <div className="text-[8px] text-slate-700 uppercase">Spread: 0.15</div>
-            </div>
 
-            {/* BIDS (BUYS) */}
-            <div className="flex flex-col gap-0.5">
-              {orderBook.bids.map((bid, i) => (
-                <div key={i} className="flex justify-between px-2 py-0.5 relative group">
-                  <div className="absolute inset-y-0 right-0 bg-[#2ebd85]/5 transition-all group-hover:bg-[#2ebd85]/10" style={{ width: `${(bid.vol / 200) * 100}%` }}></div>
-                  <span className="text-[#2ebd85] relative z-10 tabular-nums">{bid.price.toFixed(2)}</span>
-                  <span className="text-slate-500 relative z-10 tabular-nums">{bid.vol}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          
-          <div className="p-3 bg-[#080a0c]/50 border-t border-[#1c2127] flex flex-col gap-2">
-            <div className="flex justify-between text-slate-500">
-              <span className="uppercase text-[8px] font-black">Buy Pressure</span>
-              <span className="text-white">64%</span>
-            </div>
-            <div className="h-1 w-full bg-slate-800 rounded-full overflow-hidden">
-               <div className="h-full bg-[#2ebd85]" style={{ width: '64%' }}></div>
-            </div>
-          </div>
+              <div className="py-4 border-y border-[#1c2127] flex flex-col items-center justify-center bg-[#080a0c]">
+                 <div className={`text-base font-black tabular-nums ${stock.Change >= 0 ? 'text-[#2ebd85]' : 'text-[#f6465d]'}`}>
+                   {stock.LTP.toFixed(2)}
+                 </div>
+                 <div className="text-[8px] text-slate-700 font-black uppercase mt-1">Spread: 0.15</div>
+              </div>
+
+              <div className="flex flex-col gap-0.5 mt-2">
+                 {depth.bids.map((bid, i) => (
+                   <div key={i} className="flex justify-between px-2 py-0.5 relative group cursor-crosshair">
+                      <div className="absolute inset-y-0 right-0 bg-[#2ebd85]/5" style={{ width: `${(bid.vol / 900) * 100}%` }}></div>
+                      <span className="text-[#2ebd85] font-bold z-10">{bid.price.toFixed(2)}</span>
+                      <span className="text-slate-500 z-10">{bid.vol}</span>
+                   </div>
+                 ))}
+              </div>
+           </div>
+
+           <div className="p-4 bg-[#080a0c] border-t border-[#1c2127]">
+              <div className="flex justify-between text-[8px] font-black text-slate-600 uppercase mb-2">
+                 <span>Buy Pressure</span>
+                 <span className="text-[#2ebd85]">61.4%</span>
+              </div>
+              <div className="h-1 w-full bg-[#1c2127] rounded-full overflow-hidden">
+                 <div className="h-full bg-[#2ebd85]" style={{ width: '61.4%' }}></div>
+              </div>
+           </div>
         </div>
       </div>
 
-      {/* Account Status Footer */}
-      <div className="h-10 border-t border-[#1c2127] bg-[#080a0c] flex items-center px-6 justify-between text-[9px] font-black uppercase tracking-tighter">
-        <div className="flex gap-6">
-          <div className="flex items-center gap-2 text-slate-600">
-            <Zap size={10} className="text-amber-500" />
-            LTP Engine: <span className="text-slate-400">Vercel-Sync-Core</span>
-          </div>
-          <div className="flex items-center gap-2 text-slate-600">
-            Latency: <span className="text-[#2ebd85]">24ms</span>
-          </div>
-        </div>
-        <div className="flex gap-4">
-          <span className="text-slate-700">Market Data: Delayed 15m (EOD Sync)</span>
-        </div>
+      {/* Analytics Telemetry */}
+      <div className="h-8 border-t border-[#1c2127] px-6 bg-[#080a0c] flex items-center justify-between text-[8px] font-black uppercase tracking-widest text-slate-600">
+         <div className="flex gap-6">
+            <span className="flex items-center gap-2"><Zap size={10} className="text-amber-500" /> V8 QUANT ENGINE</span>
+            <span className="flex items-center gap-2"><Activity size={10} /> LATENCY: 9ms</span>
+         </div>
+         <div className="flex gap-4">
+            <span>UNIX: {Math.floor(Date.now()/1000)}</span>
+         </div>
       </div>
     </main>
   );
