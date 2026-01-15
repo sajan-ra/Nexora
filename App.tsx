@@ -9,10 +9,9 @@ import DashboardStats from './components/DashboardStats';
 import AIInsights from './components/AIInsights';
 import Auth from './components/Auth';
 import { auth, db, rtdb } from './services/firebase';
-import { fetchAllMarketLtp } from './services/api';
 import { onAuthStateChanged, signOut, User, updateProfile } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, updateDoc, increment } from 'firebase/firestore';
-import { ref, onValue, set as rtdbSet, update as rtdbUpdate } from 'firebase/database';
+import { doc, onSnapshot, updateDoc, increment } from 'firebase/firestore';
+import { ref, onValue, update as rtdbUpdate } from 'firebase/database';
 import { TrendingUp, LayoutDashboard, Briefcase, Cpu, Loader2, LogOut, Clock } from 'lucide-react';
 
 const ADMIN_UID = "wL3xCPtylQc5pxcuaFOWNdW62UW2";
@@ -29,7 +28,6 @@ const ALL_FLAT_SYMBOLS = Array.from(new Set(Object.values(SYMBOLS).flat()));
 const INITIAL_BALANCE = 50000;
 const SIMULATION_INTERVAL = 4000; 
 const RTDB_SYNC_INTERVAL = 15000; 
-const API_SYNC_INTERVAL = 600000; 
 
 const BASE_PRICES: Record<string, number> = {
   "NABIL": 498.6, "NMB": 235.1, "NICA": 321, "GBIME": 228, "EBL": 647.29, "HBL": 187.9, "NIBL": 150, "PCBL": 257, "SBL": 374.9, "SCB": 624.79, "ADBL": 288, "CZBIL": 191.5, "MBL": 220, "KBL": 178.4, "LBL": 173, "SANIMA": 319, "PRVU": 182, "BOKL": 207.3, "MEGA": 219, "SRBL": 173.1, "MNBBL": 342.6, "JBBL": 318, "GBBL": 374, "SHINE": 391, "SADBL": 381, "CORBL": 1450, "SAPDBL": 793.1, "MLBL": 354.5, "KSBBL": 429.5, "GUFL": 486, "PFL": 358, "MFIL": 709, "CFCL": 462.1, "ICFC": 620, "BFCL": 165, "SFCL": 375, "NLIC": 750.5, "LICN": 876, "ALICL": 457, "PLIC": 340, "SLICL": 387, "SNLI": 504, "ILI": 442, "ULI": 393.8, "NICL": 504.9, "SICL": 635, "NIL": 602.5, "PRIN": 657, "IGI": 414, "SALICO": 600.3, "SGIC": 472, "SPIL": 740, "HEI": 500, "RBCL": 14940, "CHCL": 498, "BPCL": 714, "NHPC": 190.8, "SHPC": 515, "RADHI": 730, "SAHAS": 543, "UPCL": 359, "UNHPL": 481.5, "AKPL": 244, "API": 289, "NGPL": 387.5, "NYADI": 370, "DHPL": 288, "RHPL": 268.8, "HPPL": 472, "CIT": 1809.5, "HIDCL": 254.5, "NIFRA": 261.2, "NRN": 1345.2, "HATHY": 886.9, "ENL": 890, "UNL": 47200, "HDL": 1132.2, "SHIVM": 575, "BNT": 11952, "BNL": 15904.9, "SARBTM": 865, "GCIL": 405.3, "SONA": 414.8, "NLO": 254.1, "OMPL": 1239, "STC": 5405, "BBC": 4864, "NTC": 895.4, "OHL": 691.1, "TRH": 708, "YHL": 600, "AHPC": 272.3
@@ -57,20 +55,14 @@ const App: React.FC = () => {
   const [portfolio, setPortfolio] = useState<Portfolio>({ balance: INITIAL_BALANCE, holdings: [], history: [] });
 
   const lastRtdbSyncRef = useRef<number>(0);
-  const lastApiSyncRef = useRef<number>(0);
   const isAdmin = useMemo(() => user?.uid === ADMIN_UID, [user]);
 
-  // Automated Market Logic (Nepal Time: UTC + 5:45)
-  // Requesting 8 AM to 3 PM for competition demo visibility
   const checkMarketStatus = useCallback(() => {
     const now = new Date();
     const nepalOffset = 5.75 * 60 * 60 * 1000;
     const nepalTime = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + nepalOffset);
-    
-    const day = nepalTime.getDay(); // 0 (Sun) - 6 (Sat)
+    const day = nepalTime.getDay();
     const hour = nepalTime.getHours();
-    
-    // Trading Hours: 8 AM to 3 PM
     const isWeekday = day >= 0 && day <= 4;
     return isWeekday && hour >= 8 && hour < 15;
   }, []);
@@ -90,7 +82,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Automated Sync & Status Loop
   useEffect(() => {
     if (!user) return;
     const interval = setInterval(() => {
@@ -105,7 +96,6 @@ const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [user, isMarketOpen, isAdmin, checkMarketStatus]);
 
-  // Global RTDB Listener for Market Open State
   useEffect(() => {
     if (!user) return;
     return onValue(ref(rtdb, 'settings/market'), (snapshot) => {
@@ -113,37 +103,43 @@ const App: React.FC = () => {
     });
   }, [user]);
 
-  // RTDB Market Feed Listener (Powered by Vercel 3 AM CRON + Admin Live Drift)
+  // Vercel CRON Data Listener: Connects UI directly to the synced data in RTDB
   useEffect(() => {
     if (!user) return;
-    return onValue(ref(rtdb, 'market/snapshot'), (snapshot) => {
+    setIsApiSyncing(true);
+    
+    // Listen to market/snapshot/stocks which is where the Vercel function writes
+    return onValue(ref(rtdb, 'market/snapshot/stocks'), (snapshot) => {
+      setIsApiSyncing(false);
       if (!snapshot.exists()) return;
-      if (isAdmin && isMarketOpen) return; // Admin calculates locally
       
-      const data = snapshot.val().stocks || {};
+      const syncedData = snapshot.val();
       setStocks(current => current.map(s => {
-        const up = data[s.Symbol];
-        if (!up) return s;
+        const remote = syncedData[s.Symbol];
+        if (!remote) return s;
+        
+        // Use remote data as the new source of truth
+        const newLtp = remote.ltp;
         return { 
           ...s, 
-          LTP: up.ltp, 
-          Change: up.change ?? s.Change, 
-          High: up.high ?? s.High, 
-          Low: up.low ?? s.Low, 
-          Volume: up.volume ?? s.Volume 
+          LTP: newLtp, 
+          // Re-calculate change based on current Open if available, or just use LTP drift
+          Change: s.Open !== 0 ? ((newLtp - s.Open) / s.Open) * 100 : s.Change,
+          High: Math.max(s.High, newLtp),
+          Low: Math.min(s.Low, newLtp)
         };
       }));
     });
-  }, [user, isAdmin, isMarketOpen]);
+  }, [user]);
 
-  // Admin Broadcast Loop: Calculates volatility and broadcasts to RTDB
+  // Admin Drift Logic for Real-Time Feel during open hours
   useEffect(() => {
     if (!isAdmin || !isMarketOpen || !user) return;
 
     const simInterval = setInterval(() => {
       const now = Date.now();
       const updatedStocks = stocks.map(stock => {
-        const volatility = 0.0005; 
+        const volatility = 0.0003; 
         const noise = (Math.random() * 2 - 1) * volatility;
         const newLTP = Number(Math.max(0.1, stock.LTP * (1 + noise)).toFixed(2));
         return {
@@ -152,19 +148,18 @@ const App: React.FC = () => {
           Change: stock.Open !== 0 ? ((newLTP - stock.Open) / stock.Open) * 100 : 0,
           High: Math.max(stock.High, newLTP),
           Low: Math.min(stock.Low, newLTP),
-          Volume: stock.Volume + Math.floor(Math.random() * 3)
+          Volume: stock.Volume + Math.floor(Math.random() * 2)
         };
       });
 
       setStocks(updatedStocks);
 
-      // Broadcast to users via RTDB every 15s
       if (now - lastRtdbSyncRef.current >= RTDB_SYNC_INTERVAL) {
-        const snapshot: Record<string, any> = {};
+        const updatePayload: Record<string, any> = {};
         updatedStocks.forEach(s => {
-          snapshot[s.Symbol] = { ltp: s.LTP, change: s.Change, high: s.High, low: s.Low, volume: s.Volume };
+          updatePayload[s.Symbol] = { ltp: s.LTP, updatedAt: now, source: 'Admin_Live_Drift' };
         });
-        rtdbUpdate(ref(rtdb, 'market'), { snapshot: { stocks: snapshot, updatedAt: now } });
+        rtdbUpdate(ref(rtdb, 'market/snapshot/stocks'), updatePayload);
         lastRtdbSyncRef.current = now;
       }
     }, SIMULATION_INTERVAL);
