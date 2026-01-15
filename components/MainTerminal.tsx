@@ -217,8 +217,8 @@ const MainTerminal: React.FC<MainTerminalProps> = ({ stock, holdings, stocks, is
             className={`absolute z-20 transition-all duration-300 ${oracleOpen ? 'w-72' : 'w-12 h-12 overflow-hidden'}`}
           >
             <div className={`bg-[#111418]/90 backdrop-blur-xl border rounded-2xl shadow-2xl flex flex-col overflow-hidden ${
-              tacticalSignal?.signal === 'BUY' ? 'border-[#2ebd85]/40 shadow-[#2ebd85]/5' : 
-              tacticalSignal?.signal === 'SELL' ? 'border-[#f6465d]/40 shadow-[#f6465d]/5' : 
+              tacticalSignal?.signal === 'BUY' ? 'border-[#2ebd85]/40 shadow-[#2ebd85]/10' : 
+              tacticalSignal?.signal === 'SELL' ? 'border-[#f6465d]/40 shadow-[#f6465d]/10' : 
               'border-white/10 shadow-black'
             }`}>
               <div className="p-3 flex items-center justify-between border-b border-white/5 drag-handle">
