@@ -1,40 +1,57 @@
 
 import { Stock } from '../types';
 
-// Using a public CORS proxy to bypass "Failed to fetch" / CORS errors
+// Using corsproxy.io for better stability than allorigins
 const BASE_URL = "https://nepsetty.kokomo.workers.dev/api/stock";
-const PROXY_URL = "https://api.allorigins.win/raw?url="; 
+const PROXY_URL = "https://corsproxy.io/?"; 
 
 /**
  * Single stock fetch with correct parser for the specific API response structure
- * Note: The API returns { symbol: "...", ltp: "..." } directly, not in a results array.
  */
 export async function fetchLiveLtp(symbol: string): Promise<number | null> {
   const cleanSymbol = symbol.trim().toUpperCase();
-  const targetUrl = `${BASE_URL}?symbol=${cleanSymbol}`;
+  // Add random timestamp to prevent caching from the proxy or browser
+  const targetUrl = `${BASE_URL}?symbol=${cleanSymbol}&_t=${Date.now()}`;
   const finalProxiedUrl = `${PROXY_URL}${encodeURIComponent(targetUrl)}`;
   
   try {
     const res = await fetch(finalProxiedUrl, {
       method: "GET",
-      cache: "no-store"
+      // Remove cache: "no-store" as it sometimes causes CORS preflight issues with simple proxies
     });
     
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[API] Failed to fetch ${cleanSymbol}: ${res.status} ${res.statusText}`);
+      return null;
+    }
 
-    const data = await res.json();
+    const text = await res.text();
+    // Handle empty responses
+    if (!text) return null;
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      console.warn(`[API] Invalid JSON for ${cleanSymbol}`, text.substring(0, 50));
+      return null;
+    }
     
-    // The specific API returns a single object with 'ltp' as a string
-    // Example: { "symbol": "NABIL", "ltp": "498.00", ... }
-    const price = Number(data?.ltp);
+    // Support multiple field names that NEPSE APIs commonly use
+    const rawPrice = data?.ltp || data?.LTP || data?.price || data?.closingPrice;
+    const price = Number(rawPrice);
     
     if (isNaN(price) || price <= 0) {
+      // Only warn if we actually got data but no price
+      if (data && Object.keys(data).length > 0) {
+         console.warn(`[API] No valid price found for ${cleanSymbol}:`, data);
+      }
       return null;
     }
     
     return price;
   } catch (err) {
-    // Silent catch for bulk sync to avoid console flooding
+    console.error(`[API ERROR] ${cleanSymbol}:`, err);
     return null;
   }
 }
@@ -46,34 +63,30 @@ async function retryFetch(symbol: string, attempts = 2): Promise<number | null> 
   for (let i = 0; i < attempts; i++) {
     const ltp = await fetchLiveLtp(symbol);
     if (ltp !== null) return ltp;
-    // Exponential-ish backoff
-    await new Promise(r => setTimeout(r, 400 * (i + 1)));
+    await new Promise(r => setTimeout(r, 800 * (i + 1)));
   }
   return null;
 }
 
 /**
  * Sequential fetcher with throttled execution and retries.
- * Optimized for professional stability during live demos.
  */
 export async function fetchAllMarketLtp(symbols: string[]): Promise<Record<string, number>> {
   const results: Record<string, number> = {};
   console.log(`Nexora Pro Engine: Initiating Production-Grade Sync for ${symbols.length} instruments...`);
   
-  // Sequential processing with increased delay to respect Public Proxy rate limits
   for (const symbol of symbols) {
     const ltp = await retryFetch(symbol);
     
     if (ltp !== null) {
       results[symbol] = ltp;
-      // Log success for visibility in dev tools
       console.debug(`[SYNC SUCCESS] ${symbol}: NPR ${ltp}`);
     } else {
-      console.warn(`[SYNC FAIL] ${symbol}: Proxy Timeout or CORS Block`);
+      console.warn(`[SYNC FAIL] ${symbol}: Proxy Timeout or Data Missing`);
     }
 
-    // Delay between requests to prevent "Failed to Fetch" from proxy congestion
-    await new Promise(r => setTimeout(r, 450));
+    // Increased delay to 600ms to be gentler on the free worker
+    await new Promise(r => setTimeout(r, 600));
   }
   
   const successCount = Object.keys(results).length;
